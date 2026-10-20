@@ -16,9 +16,8 @@
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-green"></a>
 </p>
 
-> **Status: in development, not released yet.** The calendar engine is in place (EventKit, the bridge to the menu
-> bar app, free time, statistics, iCalendar files); the MCP tools, the menu bar app and the first release are next.
-> The sections below describe version 0.1.0 as planned. See [CHANGELOG.md](CHANGELOG.md) for what exists today.
+> **Status: in development, not released yet.** The server, its tools and skills, and the menu bar app work; the
+> first signed release (DMG, Claude extension, Homebrew) is next. See [CHANGELOG.md](CHANGELOG.md).
 
 Apple Calendar MCP is an [MCP](https://modelcontextprotocol.io) server for the Calendar app on your Mac, plus a
 small menu bar app. Claude (Claude Code, the Claude app, or any MCP client) can see your day, search years of
@@ -26,6 +25,12 @@ events, find free time across all your calendars, plan focus blocks, prepare mee
 and it can only delete an event, or change one other people are invited to, after you click **OK**.
 
 The companion of [Apple Mail MCP](https://github.com/mp-consulting/apple-mail-mcp), built the same way.
+
+<p align="center">
+  <picture><source media="(prefers-color-scheme: light)" srcset="docs/images/tab-calendar-light.png"><img src="docs/images/tab-calendar.png" width="300" alt="Calendar tab: a shared event change waiting for approval, two more requests below, today's events with what is on now and next, recent activity"></picture>
+  <picture><source media="(prefers-color-scheme: light)" srcset="docs/images/tab-claude-light.png"><img src="docs/images/tab-claude.png" width="300" alt="Claude tab: Claude Code and the Claude app, the eight skills by slash command"></picture>
+  <picture><source media="(prefers-color-scheme: light)" srcset="docs/images/tab-settings-light.png"><img src="docs/images/tab-settings.png" width="300" alt="Settings tab: delete and shared-event policies, working hours, which calendars Claude can see"></picture>
+</p>
 
 ## Any calendar account, ready for AI
 
@@ -102,6 +107,10 @@ answered in Calendar.
 
 ## You stay in control
 
+<p align="center">
+  <picture><source media="(prefers-color-scheme: light)" srcset="docs/images/approval-light.png"><img src="docs/images/approval.png" width="460" alt="The approval window: a change to a shared event shown in full with a 1 of 3 pager and the people who may be told, two deletions waiting below"></picture>
+</p>
+
 When Claude wants to delete events, or change an event other people are invited to, a small window pops up with
 what would change; nothing happens without a click on **OK**.
 
@@ -114,6 +123,24 @@ what would change; nothing happens without a click on **OK**.
 - **Batch limits**: at most 50 events per change by default.
 - **Read-only mode**: `apple-calendar-mcp --read-only` offers only the reading tools.
 - **Activity**: every tool call is listed in the menu bar app (never with event details).
+
+## Skills
+
+Pick them in the panel's **Claude** tab: each one shows what it does and whether it's installed.
+
+| Skill | Or just ask… |
+|---|---|
+| `/calendar-daily-brief` | "What does my day look like?" |
+| `/calendar-scheduler` | "Find an hour with no meetings next week for the budget review." |
+| `/calendar-focus-time` | "Block six hours of focus time this week, mornings if possible." |
+| `/calendar-meeting-prep` | "Prepare me for my meetings tomorrow." |
+| `/calendar-weekly-review` | "How did my week go, and what does next week look like?" |
+| `/calendar-time-audit` | "Where did my time go this month?" |
+| `/calendar-cleanup` | "Find duplicates and conflicts in my calendar and clean them up." |
+| `/calendar-invite-import` | "Add this flight confirmation to my calendar." |
+
+The skills are also served as MCP prompts (in Claude Code: `/mcp__apple-calendar__calendar-daily-brief` and so
+on), and two resources, `calendar://today` and `calendar://upcoming`, notify subscribed clients when the day changes.
 
 ## Command line
 
@@ -143,7 +170,11 @@ Claude ──MCP (stdio)──▶ apple-calendar-mcp ──socket (signatures ch
 git clone https://github.com/mp-consulting/apple-calendar-mcp && cd apple-calendar-mcp
 # Files under ~/Documents carry Finder metadata that codesign rejects: build outside the repo.
 swift test --scratch-path ~/Library/Caches/apple-calendar-mcp-build   # tests run on in-memory calendars
+Scripts/build-app.sh --install                                        # build, sign, install, launch the app
 ```
+
+`apple-calendar-mcp --demo` serves a made-up week from memory, to try the tools without touching your calendars.
+The screenshots come from the app's `--demo --approval 3 --snapshot DIR`.
 
 Tests never touch your calendars: they run on `MemoryBackend`, which follows EventKit's rules for repeating
 events and read-only calendars. Requires Xcode 26 (Swift 6.2) for the app; the server builds with Swift 6.1.
