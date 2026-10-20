@@ -216,27 +216,31 @@ extension CalendarToolbox {
             let conflicts = Conflicts.find(events)
             let pending = all.filter { $0.myStatus == .pending }
             let meetings = timed.filter(\.hasOtherAttendees)
+            let meetingHours = meetings.reduce(0) { $0 + $1.duration } / 3600
+            let busyHours = Busy.intervals(timed).reduce(0) { $0 + $1.duration } / 3600
+            let freeMinutes = Int64(free.reduce(0) { $0 + $1.duration } / 60)
+            let allDay = events.filter(\.isAllDay)
+            let totals: [(String, JSON?)] = [
+                ("events", .int(Int64(timed.count))),
+                ("all_day", allDay.isEmpty ? nil : .int(Int64(allDay.count))),
+                ("meeting_hours", Render.hours(meetingHours)),
+                ("busy_hours", Render.hours(busyHours)),
+                ("first_start", timed.first.map { Render.date($0.start) }),
+                ("last_end", timed.map(\.end).max().map(Render.date)),
+                ("free_minutes_left", .int(freeMinutes)),
+            ]
+            var pairs: [(String, JSON?)] = [("from", Render.day(first)), ("days", days > 1 ? .int(Int64(days)) : nil)]
+            pairs.append(("summary", JSON.obj(totals)))
+            pairs.append(("now", current.isEmpty ? nil : JSON.array(current.map(Render.event))))
+            pairs.append(("next", next.map(Render.event)))
+            pairs.append(("all_day_events", allDay.isEmpty ? nil : JSON.array(allDay.map(Render.event))))
+            pairs.append(("events", JSON.array(timed.map(Render.event))))
+            pairs.append(("conflicts", conflicts.isEmpty ? nil : JSON.array(conflicts.map(Self.conflict))))
+            pairs.append(("free", JSON.array(free.map(Render.slot))))
+            pairs.append(("pending_invitations", pending.isEmpty ? nil : JSON.array(pending.map(Render.event))))
             return ToolReply(
-                json: .obj([
-                    ("from", Render.day(first)), ("days", days > 1 ? .int(Int64(days)) : nil),
-                    ("summary", .obj([
-                        ("events", .int(Int64(timed.count))),
-                        ("all_day", events.count > timed.count ? .int(Int64(events.count - timed.count)) : nil),
-                        ("meeting_hours", Render.hours(meetings.reduce(0) { $0 + $1.duration } / 3600)),
-                        ("busy_hours", Render.hours(Busy.intervals(timed).reduce(0) { $0 + $1.duration } / 3600)),
-                        ("first_start", timed.first.map { Render.date($0.start) }),
-                        ("last_end", timed.map(\.end).max().map(Render.date)),
-                        ("free_minutes_left", .int(Int64(free.reduce(0) { $0 + $1.duration } / 60))),
-                    ])),
-                    ("now", current.isEmpty ? nil : .array(current.map(Render.event))),
-                    ("next", next.map(Render.event)),
-                    ("all_day_events", events.count > timed.count ? .array(events.filter(\.isAllDay).map(Render.event)) : nil),
-                    ("events", .array(timed.map(Render.event))),
-                    ("conflicts", conflicts.isEmpty ? nil : .array(conflicts.map(Self.conflict))),
-                    ("free", .array(free.map(Render.slot))),
-                    ("pending_invitations", pending.isEmpty ? nil : .array(pending.map(Render.event))),
-                ]),
-                summary: "\(Self.plural(timed.count, "event")), \(conflicts.isEmpty ? "no" : String(conflicts.count)) conflict\(conflicts.count == 1 ? "" : "s")")
+                json: .obj(pairs),
+                summary: Self.plural(timed.count, "event") + ", " + (conflicts.isEmpty ? "no conflicts" : Self.plural(conflicts.count, "conflict")))
         }
     }
 
