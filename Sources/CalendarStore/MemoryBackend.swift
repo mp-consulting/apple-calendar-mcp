@@ -133,8 +133,13 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
                     series[ref.eventID] = item
                     return first(of: item) ?? item.event
                 }
-                // Split: the old series ends before this occurrence, a new one starts with the change.
-                item.event.recurrence?.until = original.addingTimeInterval(-1)
+                // Split: the old series ends before this occurrence, a new one starts with the change and keeps
+                // the occurrences the old one had left.
+                let oldRule = item.event.recurrence!
+                let before = expander.starts(
+                    of: oldRule, seriesStart: item.event.start, duration: item.event.duration, from: item.event.start, to: original
+                ).count
+                item.event.recurrence?.until = dayBefore(original)
                 item.event.recurrence?.count = nil
                 item.exceptions = item.exceptions.filter { $0.key < original }
                 series[ref.eventID] = item
@@ -144,11 +149,9 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
                 nextID += 1
                 tail.isDetached = false
                 tail.occurrenceDate = nil
-                tail.recurrence = item.event.recurrence.map { rule in
-                    var rule = rule
-                    rule.until = nil
-                    return rule
-                }
+                var tailRule = oldRule
+                tailRule.count = oldRule.count.map { max(1, $0 - before) }
+                tail.recurrence = tailRule
                 tail = try edit(tail)
                 series[tail.eventID] = Series(event: tail)
                 return first(of: Series(event: tail)) ?? tail
@@ -176,7 +179,7 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
                     series[ref.eventID] = nil
                     return
                 }
-                item.event.recurrence?.until = original.addingTimeInterval(-1)
+                item.event.recurrence?.until = dayBefore(original)
                 item.event.recurrence?.count = nil
                 item.exceptions = item.exceptions.filter { $0.key < original }
             }
@@ -229,6 +232,9 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
         copy.occurrenceDate = date
         return copy
     }
+
+    /// The last second of the day before `date`: `until` counts whole days, so this ends a series before `date`.
+    private func dayBefore(_ date: Date) -> Date { expander.calendar.startOfDay(for: date).addingTimeInterval(-1) }
 
     private func first(of item: Series) -> Event? {
         occurrences(of: item, from: item.event.start, to: item.event.start.addingTimeInterval(max(item.event.duration, 1))).first

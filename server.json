@@ -1,0 +1,23 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.mp-consulting/apple-calendar-mcp",
+  "title": "Apple Calendar",
+  "description": "Read, search and plan Apple Calendar on macOS via EventKit: free time, undo, you approve deletes",
+  "repository": {
+    "url": "https://github.com/mp-consulting/apple-calendar-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/mp-consulting/apple-calendar-mcp",
+  "version": "__VERSION__",
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/mp-consulting/apple-calendar-mcp/releases/download/v__VERSION__/AppleCalendarMCP-__VERSION__.mcpb",
+      "version": "__VERSION__",
+      "fileSha256": "__SHA256__",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+name: CI
+
+# Tests and builds every push to main and every pull request. The release workflow tests again
+# before it signs anything.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # macOS 26 and its Xcode: the menu bar app uses the Liquid Glass APIs and Swift 6.2.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Use the newest Xcode on the runner
+        # The image's default can lag behind; local builds use the current Xcode, so CI should too.
+        run: |
+          XCODE="$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -n 1)"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+          swift --version
+
+      - name: Skills are embedded
+        if: hashFiles('Skills/*/SKILL.md') != ''
+        run: |
+          Scripts/embed-skills.sh
+          git diff --exit-code Sources/CalendarMCPKit/SkillCatalog+Generated.swift
+
+      - name: Test
+        run: swift test
+
+      - name: Build
+        run: swift build -c release --arch arm64

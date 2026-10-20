@@ -1,0 +1,48 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/mcpb/main/dist/mcpb-manifest-v0.3.schema.json",
+  "manifest_version": "0.3",
+  "name": "apple-calendar-mcp",
+  "display_name": "Apple Calendar",
+  "version": "__VERSION__",
+  "description": "See your day, search events, find free time and plan your week in Apple Calendar; deleting and changes others see wait for your OK.",
+  "long_description": "Apple Calendar MCP works with every calendar in the Calendar app on your Mac (iCloud, Google, Exchange, CalDAV, subscriptions) through EventKit, so a week or a year of events comes back in milliseconds. It finds free time within your working hours, spots conflicts, reports where your time goes, and adds, moves or deletes events, one occurrence or a whole series, with undo.\n\n**Needs the Apple Calendar MCP app.** macOS gives calendar access to the app that starts a server, and Claude cannot be given it on the server's behalf. The menu bar app holds the Calendars permission and the server reaches your calendars through it (it opens the app in the background when needed). Download the DMG from the GitHub releases, open it once, and allow Calendar access.",
+  "author": {
+    "name": "Mickael Palma",
+    "url": "https://github.com/mp-consulting"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mp-consulting/apple-calendar-mcp"
+  },
+  "homepage": "https://github.com/mp-consulting/apple-calendar-mcp",
+  "documentation": "https://github.com/mp-consulting/apple-calendar-mcp#readme",
+  "support": "https://github.com/mp-consulting/apple-calendar-mcp/issues",
+  "icon": "icon.png",
+  "server": {
+    "type": "binary",
+    "entry_point": "server/apple-calendar-mcp",
+    "mcp_config": {
+      "command": "${__dirname}/server/apple-calendar-mcp",
+      "args": [],
+      "env": {
+        "APPLE_CALENDAR_MCP_READ_ONLY": "${user_config.read_only}",
+        "APPLE_CALENDAR_MCP_COMMIT": "__COMMIT__.mcpb"
+      }
+    }
+  },
+  "tools": __TOOLS__,
+  "keywords": ["calendar", "apple calendar", "eventkit", "macos", "scheduling", "productivity"],
+  "license": "MIT",
+  "compatibility": {
+    "platforms": ["darwin"]
+  },
+  "user_config": {
+    "read_only": {
+      "type": "boolean",
+      "title": "Read-only",
+      "description": "Only reading tools: no creating, changing or deleting events.",
+      "default": false,
+      "required": false
+    }
+  }
+}
