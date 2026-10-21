@@ -223,7 +223,8 @@ struct CalendarTab: View {
     /// The approval queue appears and leaves at once, so a Delete button never lingers on screen.
     var body: some View {
         VStack(alignment: .leading, spacing: 0) { update }
-            .animatesChanges(of: [model.updater.availableRelease?.version.description, model.updater.installing != nil] as [AnyHashable])
+            .animatesChanges(of: [model.updater.availableRelease?.version.description, model.updater.installing != nil,
+                                model.updater.installedElsewhere?.description] as [AnyHashable])
         if !model.pending.isEmpty {
             ApprovalQueue(model: model).padding(.horizontal, 12).padding(.top, 4).padding(.bottom, 4).neverAnimated()
         }
@@ -235,6 +236,14 @@ struct CalendarTab: View {
         if let (release, progress) = model.updater.installing {
             Row(systemImage: "arrow.down.circle.fill", iconColor: .accentColor, title: "Updating to version \(release.version.description)", detail: progress.step) {
                 ProgressView(value: progress.fraction).frame(width: 110).accessibilityLabel("Update progress")
+            }
+        } else if let version = model.updater.installedElsewhere {
+            Row(
+                systemImage: "arrow.clockwise.circle.fill", iconColor: .accentColor,
+                title: "Version \(version.description) is installed",
+                detail: "Another account on this Mac updated Apple Calendar MCP. Relaunch to use it.")
+            {
+                Button("Relaunch") { model.updater.relaunchIntoInstalledVersion() }.glassButton(prominent: true).controlSize(.small)
             }
         } else if let release = model.updater.availableRelease {
             Row(
