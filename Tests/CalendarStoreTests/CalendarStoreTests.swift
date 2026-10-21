@@ -178,6 +178,14 @@ func event(_ id: String, _ title: String, _ start: Date, minutes: Int = 60, cale
         #expect(pairs.map { "\($0.0.title)+\($0.1.title)" } == ["A+B", "B+C"])
     }
 
+    @Test func theSameMeetingInTwoCalendarsIsNoConflict() {
+        let mine = event("a", "Weekly team", at(2026, 10, 26, 10))
+        var shared = event("b", "Weekly team", at(2026, 10, 26, 10))
+        shared.calendarID = "colleague"
+        #expect(Conflicts.find([mine, shared]).isEmpty)
+        #expect(Conflicts.find([mine, event("c", "Other call", at(2026, 10, 26, 10, 30))]).count == 1)
+    }
+
     @Test func videoLinksAreFoundInNotes() {
         var call = event("v", "Call", at(2026, 10, 20, 10))
         call.notes = "Agenda attached.\nJoin: https://us02web.zoom.us/j/123456789?pwd=abc\nThanks"

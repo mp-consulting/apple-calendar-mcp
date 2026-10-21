@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The same meeting seen through two calendars (yours and a colleague's shared one) is no longer a conflict.
+
 ### Added
 
 - **Calendar store** (`CalendarStore`): events, calendars, attendees, alarms and repeat rules; EventKit reads and

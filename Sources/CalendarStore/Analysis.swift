@@ -104,14 +104,17 @@ public enum FreeTime {
 }
 
 public enum Conflicts {
-    /// Pairs of timed events that overlap and both take the time (free, declined and cancelled ones do not count).
+    /// Pairs of timed events that overlap and both take the time (free, declined and cancelled ones do not count). The
+    /// same meeting seen through two calendars (yours and a colleague's shared one: same title, start and end) is
+    /// one meeting, not a conflict.
     public static func find(_ events: [Event]) -> [(Event, Event)] {
         let timed = events.filter { Busy.blocks($0) && !$0.isAllDay }.sorted(by: Event.chronological)
         var pairs: [(Event, Event)] = []
         for (index, event) in timed.enumerated() {
             for other in timed[(index + 1)...] {
                 guard other.start < event.end else { break }
-                if other.end > event.start, other.id != event.id { pairs.append((event, other)) }
+                let sameMeeting = other.title == event.title && other.start == event.start && other.end == event.end
+                if other.end > event.start, other.id != event.id, !sameMeeting { pairs.append((event, other)) }
             }
         }
         return pairs
