@@ -239,7 +239,10 @@ struct CalendarTab: View {
         } else if let release = model.updater.availableRelease {
             Row(
                 systemImage: "arrow.down.circle.fill", iconColor: .accentColor, title: "Version \(release.version.description) is available",
-                detail: model.updater.installBlocker ?? "Installs and relaunches in a few seconds.")
+                detail: model.updater.installBlocker
+                    ?? (model.updater.needsAdministrator
+                        ? "Asks for an administrator's password, then relaunches."
+                        : "Installs and relaunches in a few seconds."))
             {
                 if model.updater.installBlocker == nil {
                     Button("Update") { Task { await model.updater.install(release) } }.glassButton(prominent: true).controlSize(.small)
