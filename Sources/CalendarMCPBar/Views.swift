@@ -197,18 +197,14 @@ struct TabBar: View {
                             }
                         }
                         .font(.callout.weight(selected == tab ? .semibold : .regular))
+                        .foregroundStyle(selected == tab ? .primary : .secondary)
                         .frame(maxWidth: .infinity, minHeight: 28)
                         .contentShape(Capsule())
-                        .background {
-                            if selected == tab {
-                                Capsule().fill(.clear)
-                                    .glassBackground(Capsule(), interactive: true)
-                                    .glassID("selection", in: glass)
-                                    .matchedGeometryEffect(id: "selection", in: glass)
-                            }
-                        }
+                        // The glass carries the label: text drawn on it, never under it.
+                        .modifier(SelectedGlass(isOn: selected == tab, id: "selection", namespace: glass))
                     }
                     .buttonStyle(PressableButtonStyle())
+                    .focusEffectDisabled()
                     .accessibilityAddTraits(selected == tab ? [.isButton, .isSelected] : .isButton)
                 }
             }
@@ -524,7 +520,10 @@ struct ApprovalBlock: View {
             }
         }
         .padding(12)
-        .glassBackground(RoundedRectangle(cornerRadius: 16, style: .continuous), tint: .orange)
+        // Orange on the glass itself: a glass tint fades to grey when the window is not active, and this block must
+        // stand out either way.
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.orange.opacity(0.12)))
+        .glassBackground(RoundedRectangle(cornerRadius: 16, style: .continuous), tint: .orange, strength: 0.5)
         .onChange(of: request.id) { showAll = false }
     }
 }
@@ -821,21 +820,36 @@ struct WeekdayPicker: View {
                         if on { selection.removeAll { $0 == day } } else { selection = (selection + [day]).sorted() }
                     } label: {
                         Text(Calendar.current.veryShortWeekdaySymbols[day - 1])
-                            .font(.caption.weight(on ? .semibold : .regular))
+                            .font(.caption.weight(on ? .bold : .regular))
+                            .foregroundStyle(on ? .primary : .secondary)
                             .frame(width: 30, height: 24)
                             .contentShape(Capsule())
-                            .background {
-                                if on { Capsule().fill(.clear).glassBackground(Capsule(), tint: .accentColor, interactive: true).glassID(day, in: glass) }
-                            }
-                            .foregroundStyle(on ? .primary : .secondary)
+                            .modifier(SelectedGlass(isOn: on, id: day, namespace: glass, tint: .accentColor))
                     }
                     .buttonStyle(PressableButtonStyle())
+                    .focusEffectDisabled()
                     .accessibilityLabel(Calendar.current.weekdaySymbols[day - 1])
                     .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
                 }
             }
         }
         .animatesChanges(of: selection)
+    }
+}
+
+/// Glass on the view itself while `isOn` (a selected tab or day), tied to `id` so it morphs between them.
+struct SelectedGlass<ID: Hashable & Sendable>: ViewModifier {
+    let isOn: Bool
+    let id: ID
+    let namespace: Namespace.ID
+    var tint: Color? = nil
+
+    func body(content: Content) -> some View {
+        if isOn {
+            content.glassBackground(Capsule(), tint: tint, interactive: true).glassID(id, in: namespace)
+        } else {
+            content
+        }
     }
 }
 

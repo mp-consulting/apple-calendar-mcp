@@ -7,8 +7,8 @@ import SwiftUI
 extension View {
     /// A glass shape behind this view (tinted when `tint` is given).
     @ViewBuilder
-    func glassBackground(_ shape: some Shape = Capsule(), tint: Color? = nil, interactive: Bool = false) -> some View {
-        modifier(GlassBackground(shape: AnyShape(shape), tint: tint, interactive: interactive))
+    func glassBackground(_ shape: some Shape = Capsule(), tint: Color? = nil, strength: Double = 0.3, interactive: Bool = false) -> some View {
+        modifier(GlassBackground(shape: AnyShape(shape), tint: tint, strength: strength, interactive: interactive))
     }
 
     /// Glass button style (prominent = tinted glass for the primary action).
@@ -49,6 +49,8 @@ extension EnvironmentValues {
 private struct GlassBackground: ViewModifier {
     let shape: AnyShape
     let tint: Color?
+    /// How strongly the tint colours the glass (0…1).
+    let strength: Double
     let interactive: Bool
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
@@ -57,7 +59,7 @@ private struct GlassBackground: ViewModifier {
     func body(content: Content) -> some View {
         if drawsGlassAsFill {
             content.background {
-                shape.fill(tint.map { $0.opacity(0.16) } ?? Color.primary.opacity(0.09))
+                shape.fill(tint.map { $0.opacity(strength * 0.55) } ?? Color.primary.opacity(0.09))
                     .overlay(shape.stroke(LinearGradient(colors: [.white.opacity(0.35), .white.opacity(0.05)], startPoint: .top, endPoint: .bottom), lineWidth: 0.75))
                     .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
             }
@@ -70,7 +72,7 @@ private struct GlassBackground: ViewModifier {
         } else {
             #if compiler(>=6.2)
             if #available(macOS 26.0, *) {
-                let glass = tint.map { Glass.regular.tint($0.opacity(0.3)) } ?? .regular
+                let glass = tint.map { Glass.regular.tint($0.opacity(strength)) } ?? .regular
                 content.glassEffect(interactive ? glass.interactive() : glass, in: shape)
             } else {
                 content.background { frosted }
