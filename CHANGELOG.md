@@ -6,9 +6,9 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Fixed
+## [0.1.0] - 2026-10-21
 
-- The same meeting seen through two calendars (yours and a colleague's shared one) is no longer a conflict.
+The first release.
 
 ### Added
 
@@ -35,3 +35,6 @@ All notable changes to this project are documented here. The format follows
 - `apple-calendar-mcp --demo` and the app's `--demo --snapshot` (README screenshots) use a made-up week.
 - CI on every push and pull request; the release workflow (signed, notarized DMG and Claude extension, MCP
   registry).
+
+[Unreleased]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/mp-consulting/apple-calendar-mcp/releases/tag/v0.1.0

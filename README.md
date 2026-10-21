@@ -16,9 +16,6 @@
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-green"></a>
 </p>
 
-> **Status: in development, not released yet.** The server, its tools and skills, and the menu bar app work; the
-> first signed release (DMG, Claude extension, Homebrew) is next. See [CHANGELOG.md](CHANGELOG.md).
-
 Apple Calendar MCP is an [MCP](https://modelcontextprotocol.io) server for the Calendar app on your Mac, plus a
 small menu bar app. Claude (Claude Code, the Claude app, or any MCP client) can see your day, search years of
 events, find free time across all your calendars, plan focus blocks, prepare meetings, and add or move events,
@@ -60,9 +57,21 @@ return in milliseconds, repeating events expand exactly as Calendar shows them, 
 
 ## Install
 
-The first release will come as a notarized, Developer ID signed **DMG** (the menu bar app with the server inside),
-a **Claude extension** (`.mcpb`), and a Homebrew cask (`mp-consulting/tap/apple-calendar-mcp`), like Apple Mail
-MCP. Until then, build it from source (see [Development](#development)).
+**Homebrew:**
+
+```sh
+brew install --cask mp-consulting/tap/apple-calendar-mcp
+```
+
+**Or download** the app or the Claude extension from the [latest release](https://github.com/mp-consulting/apple-calendar-mcp/releases/latest):
+
+| File | For |
+|---|---|
+| `AppleCalendarMCP-x.y.z.dmg` | The menu bar app with the server inside: Calendar access, approvals, activity, skills, one-click setup. Required. |
+| `AppleCalendarMCP-x.y.z.mcpb` | The Claude app only: double-click to install the server as a Claude extension. It still needs the app above for Calendar access. |
+
+Both are notarized, signed with Developer ID, and run on Apple silicon and Intel Macs (macOS 14+). The server is also
+listed in the [MCP registry](https://registry.modelcontextprotocol.io) as `io.github.mp-consulting/apple-calendar-mcp`.
 
 Then:
 
