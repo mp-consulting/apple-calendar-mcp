@@ -6,10 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-22
+
 ### Changed
 
 - When another account on the Mac updates Apple Calendar MCP, the running copy offers to relaunch into the new
   version instead of offering the same update again.
+
+### Fixed
+
+- A server still running after the app was updated, moved or deleted explains that, and asks to restart the
+  MCP client (quit and reopen Claude), instead of reporting that it could not read its code signature.
 
 ## [0.1.2] - 2026-10-21
 
@@ -64,7 +71,8 @@ The first release.
 - CI on every push and pull request; the release workflow (signed, notarized DMG and Claude extension, MCP
   registry).
 
-[Unreleased]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mp-consulting/apple-calendar-mcp/releases/tag/v0.1.0
