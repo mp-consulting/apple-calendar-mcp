@@ -51,16 +51,27 @@ enum CodeSigning {
         var staticCode: SecStaticCode?
         guard SecCodeCopySelf([], &code) == errSecSuccess, let code,
             SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode
-        else { throw CalendarError("Could not read this program's code signature.") }
+        else { throw unreadableSignature() }
         var dictionary: CFDictionary?
         guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &dictionary) == errSecSuccess,
             let values = dictionary as? [String: Any]
-        else { throw CalendarError("Could not read this program's code signature.") }
+        else { throw unreadableSignature() }
         let team = values[kSecCodeInfoTeamIdentifier as String] as? String
         let leaf = (values[kSecCodeInfoCertificates as String] as? [SecCertificate])?.first.map { certificate in
             Insecure.SHA1.hash(data: SecCertificateCopyData(certificate) as Data).map { String(format: "%02X", $0) }.joined()
         }
         return Info(team: team, leafSHA1: leaf)
+    }
+
+    /// The signature is read from the file on disk: a server still running after its app was moved, updated or
+    /// deleted has none left to read. The client must start the new one.
+    private static func unreadableSignature() -> CalendarError {
+        if let path = Bundle.main.executablePath, !FileManager.default.fileExists(atPath: path) {
+            return CalendarError(
+                "This server's program was moved, updated or deleted while it was running (\(path)). "
+                    + "Restart the MCP client (quit and reopen Claude) to start the installed version.")
+        }
+        return CalendarError("Could not read this program's code signature.")
     }
 
     /// Whether the process at the other end of the connected socket `fd` runs as this user and meets `requirement`.
