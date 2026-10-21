@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-21
+
+### Fixed
+
+- **"Restart Claude" no longer stays after a restart.** The app compared the date of the Claude app's config file
+  with Claude's launch, but Claude saves its own preferences in that file while it runs, so the file nearly always
+  looked newer and the button never went away. The app now records when it changed its own entry and asks for a
+  restart only when that change is newer than Claude's launch.
+
 ## [0.1.1] - 2026-10-21
 
 ### Fixed
@@ -50,6 +59,7 @@ The first release.
 - CI on every push and pull request; the release workflow (signed, notarized DMG and Claude extension, MCP
   registry).
 
-[Unreleased]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mp-consulting/apple-calendar-mcp/releases/tag/v0.1.0
