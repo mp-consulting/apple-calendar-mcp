@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-21
+
+### Fixed
+
+- **Updates work when another account installed the app.** On a Mac with several accounts, the app in Applications
+  belongs to whoever installed or last updated it, and the other accounts could not replace it: the update was
+  offered, then failed at the last step. The updater now checks every folder in the app, and when this account
+  cannot replace it, asks for an administrator's password and swaps it in as root, after checking the signature
+  again on a copy only root can change. Every install also leaves the app writable by the `admin` group, so the
+  next update needs no password from any administrator account.
+
+  This version is installed by the previous updater, so an account that cannot write the app still has to install
+  0.1.1 once from the release page (or run the update from the account that owns it).
+
 ## [0.1.0] - 2026-10-21
 
 The first release.
@@ -36,5 +50,6 @@ The first release.
 - CI on every push and pull request; the release workflow (signed, notarized DMG and Claude extension, MCP
   registry).
 
-[Unreleased]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mp-consulting/apple-calendar-mcp/releases/tag/v0.1.0
