@@ -114,7 +114,7 @@ enum Snapshots {
             NSApp.appearance = NSAppearance(named: appearanceName)
             func save(_ view: some View, _ name: String) {
                 // AppKit draws the hosted view into a bitmap: real controls and scroll views, no screen needed.
-                let host = NSHostingView(rootView: view.environment(\.drawsGlassAsFill, true).background(Color(nsColor: .windowBackgroundColor)))
+                let host = NSHostingView(rootView: view.background(Color(nsColor: .windowBackgroundColor)))
                 host.appearance = NSAppearance(named: appearanceName)
                 host.frame = NSRect(origin: .zero, size: host.fittingSize)
                 let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)

@@ -2,8 +2,8 @@ import CalendarMCPKit
 import CalendarStore
 import SwiftUI
 
-// One surface, sections and rows (no stacked cards). Glass marks the controls: the tab selection, buttons, the
-// status chips, and the approval block, the one thing that asks for attention.
+// One surface, sections and rows (no stacked cards), the same look as Apple Mail MCP: Liquid Glass on the buttons over
+// the system's glass menu window, quiet fills elsewhere. The approval is the only emphasized block.
 
 // MARK: Building blocks
 
@@ -72,17 +72,15 @@ struct Checkmark: View {
     }
 }
 
-/// A small glass label: "Now", "in 25 min".
+/// "Now" or "in 25 min" at the end of an event row.
 struct Chip: View {
     let text: String
     var tint: Color? = nil
 
     var body: some View {
         Text(text)
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .glassBackground(Capsule(), tint: tint)
+            .font(.caption.weight(tint == nil ? .regular : .semibold).monospacedDigit())
+            .foregroundStyle(tint ?? .secondary)
     }
 }
 
@@ -157,7 +155,6 @@ struct MenuContent: View {
             case .calendar:
                 Text(model.footerLine).font(.caption).foregroundStyle(.tertiary)
                 Spacer()
-                Button("Open Calendar") { model.openCalendarApp() }.buttonStyle(.link).font(.caption)
             }
             Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }
                 .buttonStyle(.borderless)
@@ -169,48 +166,50 @@ struct MenuContent: View {
     }
 }
 
-/// Tabs with one glass capsule that morphs from tab to tab; a count badge on Calendar, a dot on Claude.
+/// Segmented tab bar with a count badge on Calendar and a dot on Claude when something needs doing (as in Apple Mail MCP).
 struct TabBar: View {
     @Bindable var model: AgentModel
     let selected: PanelTab
     let select: (PanelTab) -> Void
-    @Namespace private var glass
+    /// One selection pill that slides from tab to tab, like a segmented control.
+    @Namespace private var pill
 
     var body: some View {
-        GlassGroup(spacing: 4) {
-            HStack(spacing: 2) {
-                ForEach(PanelTab.allCases) { tab in
-                    Button { select(tab) } label: {
-                        HStack(spacing: 5) {
-                            Text(tab.rawValue)
-                            if tab == .calendar, !model.pending.isEmpty {
-                                Text("\(model.pending.count)")
-                                    .contentTransition(.numericText(value: Double(model.pending.count)))
-                                    .font(.caption2.weight(.bold))
-                                    .foregroundStyle(.black)
-                                    .padding(.horizontal, 5)
-                                    .frame(minWidth: 16, minHeight: 16)
-                                    .background(Capsule().fill(Color.orange))
-                            }
-                            if tab == .claude, model.claudeNeedsAction {
-                                Circle().fill(Color.orange).frame(width: 6, height: 6)
-                            }
+        HStack(spacing: 2) {
+            ForEach(PanelTab.allCases) { tab in
+                Button { select(tab) } label: {
+                    HStack(spacing: 5) {
+                        Text(tab.rawValue)
+                        if tab == .calendar, !model.pending.isEmpty {
+                            Text("\(model.pending.count)")
+                                .contentTransition(.numericText(value: Double(model.pending.count)))
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.black)
+                                .padding(.horizontal, 5)
+                                .frame(minWidth: 16, minHeight: 16)
+                                .background(Capsule().fill(Color.orange))
                         }
-                        .font(.callout.weight(selected == tab ? .semibold : .regular))
-                        .foregroundStyle(selected == tab ? .primary : .secondary)
-                        .frame(maxWidth: .infinity, minHeight: 28)
-                        .contentShape(Capsule())
-                        // The glass carries the label: text drawn on it, never under it.
-                        .modifier(SelectedGlass(isOn: selected == tab, id: "selection", namespace: glass))
+                        if tab == .claude, model.claudeNeedsAction {
+                            Circle().fill(Color.orange).frame(width: 6, height: 6)
+                        }
                     }
-                    .buttonStyle(PressableButtonStyle())
-                    .focusEffectDisabled()
-                    .accessibilityAddTraits(selected == tab ? [.isButton, .isSelected] : .isButton)
+                    .font(.callout.weight(selected == tab ? .semibold : .regular))
+                    .frame(maxWidth: .infinity, minHeight: 26)
+                    .contentShape(Rectangle())
+                    .background {
+                        if selected == tab {
+                            RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.14))
+                                .matchedGeometryEffect(id: "pill", in: pill)
+                        }
+                    }
                 }
+                .buttonStyle(PressableButtonStyle())
+                .focusEffectDisabled()
+                .accessibilityAddTraits(selected == tab ? [.isButton, .isSelected] : .isButton)
             }
-            .padding(3)
-            .background(Capsule().fill(Color.primary.opacity(0.06)))
         }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 9).fill(Color.primary.opacity(0.07)))
         .animatesChanges(of: selected)
         .animatesChanges(of: model.pending.count)
     }
@@ -386,7 +385,7 @@ struct ActivityRow: View {
             Image(systemName: status.symbol).font(.system(size: 8, weight: .bold)).foregroundStyle(status.color)
                 .frame(width: 10).accessibilityLabel(status.label)
             Text(entry.tool.replacingOccurrences(of: "_", with: " ")).font(.caption).lineLimit(1)
-                .frame(width: 122, alignment: .leading)
+                .frame(width: 132, alignment: .leading)
             Text(entry.summary).font(.caption).foregroundStyle(entry.ok ? .secondary : .primary).lineLimit(entry.ok ? 1 : 2)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
@@ -451,6 +450,7 @@ struct ApprovalQueue: View {
 
 struct ApprovalBlock: View {
     let request: ApprovalRequest
+    @Environment(\.colorSchemeContrast) private var contrast
     var position: (Int, Int)?
     var page: (Int) -> Void = { _ in }
     let decide: (Bool) -> Void
@@ -516,14 +516,13 @@ struct ApprovalBlock: View {
                 }
                 Spacer()
                 Button(wording.no, role: .cancel) { decide(false) }.glassButton()
-                Button(wording.yes) { decide(true) }.glassButton(prominent: true).tint(.orange).keyboardShortcut(.defaultAction)
+                Button(wording.yes) { decide(true) }.glassButton(prominent: true).keyboardShortcut(.defaultAction)
             }
         }
         .padding(12)
-        // Orange on the glass itself: a glass tint fades to grey when the window is not active, and this block must
-        // stand out either way.
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.orange.opacity(0.12)))
-        .glassBackground(RoundedRectangle(cornerRadius: 16, style: .continuous), tint: .orange, strength: 0.5)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.orange.opacity(contrast == .increased ? 0.18 : 0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.orange.opacity(contrast == .increased ? 0.9 : 0.35),
+                                                                 lineWidth: contrast == .increased ? 1.5 : 1))
         .onChange(of: request.id) { showAll = false }
     }
 }
@@ -693,7 +692,7 @@ struct SlashCommand: View {
         } label: {
             Text(copied ? "Copied /\(name)" : "/\(name)")
                 .font(.callout.monospaced())
-                .foregroundStyle(copied ? Color.green : Color.pink)
+                .foregroundStyle(copied ? Color.green : Color.orange)
                 .contentTransition(.opacity)
         }
         .buttonStyle(.borderless)
@@ -806,50 +805,34 @@ struct TimeField: View {
     }
 }
 
-/// Working days as a row of toggles, Monday first.
+/// Working days as a row of toggles, Monday first, in the tab bar's segmented style.
 struct WeekdayPicker: View {
     @Binding var selection: [Int]
-    @Namespace private var glass
 
     var body: some View {
-        GlassGroup(spacing: 4) {
-            HStack(spacing: 4) {
-                ForEach([2, 3, 4, 5, 6, 7, 1], id: \.self) { day in
-                    let on = selection.contains(day)
-                    Button {
-                        if on { selection.removeAll { $0 == day } } else { selection = (selection + [day]).sorted() }
-                    } label: {
-                        Text(Calendar.current.veryShortWeekdaySymbols[day - 1])
-                            .font(.caption.weight(on ? .bold : .regular))
-                            .foregroundStyle(on ? .primary : .secondary)
-                            .frame(width: 30, height: 24)
-                            .contentShape(Capsule())
-                            .modifier(SelectedGlass(isOn: on, id: day, namespace: glass, tint: .accentColor))
-                    }
-                    .buttonStyle(PressableButtonStyle())
-                    .focusEffectDisabled()
-                    .accessibilityLabel(Calendar.current.weekdaySymbols[day - 1])
-                    .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
+        HStack(spacing: 2) {
+            ForEach([2, 3, 4, 5, 6, 7, 1], id: \.self) { day in
+                let on = selection.contains(day)
+                Button {
+                    if on { selection.removeAll { $0 == day } } else { selection = (selection + [day]).sorted() }
+                } label: {
+                    Text(Calendar.current.veryShortWeekdaySymbols[day - 1])
+                        .font(.caption.weight(on ? .semibold : .regular))
+                        .foregroundStyle(on ? .primary : .secondary)
+                        .frame(width: 30, height: 22)
+                        .contentShape(Rectangle())
+                        .background { if on { RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.14)) } }
                 }
+                .buttonStyle(PressableButtonStyle())
+                .focusEffectDisabled()
+                .accessibilityLabel(Calendar.current.weekdaySymbols[day - 1])
+                .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
             }
         }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.07)))
+        .fixedSize()
         .animatesChanges(of: selection)
-    }
-}
-
-/// Glass on the view itself while `isOn` (a selected tab or day), tied to `id` so it morphs between them.
-struct SelectedGlass<ID: Hashable & Sendable>: ViewModifier {
-    let isOn: Bool
-    let id: ID
-    let namespace: Namespace.ID
-    var tint: Color? = nil
-
-    func body(content: Content) -> some View {
-        if isOn {
-            content.glassBackground(Capsule(), tint: tint, interactive: true).glassID(id, in: namespace)
-        } else {
-            content
-        }
     }
 }
 

@@ -10,7 +10,7 @@ An MCP server for Apple Calendar in Swift, plus a menu bar app. The companion of
 | `CalendarStore` | Models, `CalendarBackend` (EventKit, memory, bridge), repeat rules, free time, conflicts, statistics, iCalendar |
 | `CalendarMCPKit` | MCP tools (`Tools+*.swift`), settings and policies, undo journal, activity log, path guard, skills, installer, doctor |
 | `apple-calendar-mcp` | The server and CLI (`serve`, `doctor`, `install`, `skills`, `call`, `--demo`) |
-| `CalendarMCPBar` | The menu bar app (SwiftUI, Liquid Glass): bridge host, approvals, today, activity, Claude setup, settings, updater |
+| `CalendarMCPBar` | The menu bar app (SwiftUI, as Apple Mail MCP's): bridge host, approvals, today, activity, Claude setup, settings, updater |
 | `CalendarFixtures` | The made-up demo week (tests, `--demo`, screenshots) |
 | `Skills/` | The Claude skills, one `SKILL.md` each; embedded into the binary |
 
@@ -51,8 +51,10 @@ APPLE_CALENDAR_MCP_SUPPORT_DIR=/tmp/acm-demo "…/Apple Calendar MCP.app/Content
   trailer and no "Generated with Claude Code" line.
 - CI's compiler (Swift 6.2) is slower than local: build big `JSON.obj` literals in typed steps
   (`-Xfrontend -warn-long-expression-type-checking=60` finds them).
-- Liquid Glass is composited by the window server: `--snapshot` bitmaps draw it as a tinted fill
-  (`drawsGlassAsFill`), the live app shows real glass.
+- **The panel looks like Apple Mail MCP's** (same `Views.swift` building blocks, segmented tab bar, orange-bordered
+  approval block): Liquid Glass only on buttons (`glassButton`), over the system's glass menu window. Glass on a
+  selection behind a label made the label unreadable; and `--snapshot` bitmaps cannot hold glass (the window server
+  composites it), so they would show blank areas.
 
 ## EventKit facts this code depends on
 
