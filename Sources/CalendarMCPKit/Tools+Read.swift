@@ -258,7 +258,9 @@ extension CalendarToolbox {
             """
             Free slots of at least duration_minutes between busy events, within working hours by default (Settings), \
             with an optional buffer around events. Free, declined and cancelled events, and all-day events not marked \
-            busy, do not block time. Each slot is reported whole: any start inside it works.
+            busy, do not block time. Each slot is reported whole: any start inside it works. To meet someone in \
+            another time zone, pass other_time_zone (and other_hours): only times inside their working hours remain. \
+            format "text" adds the slots as lines to paste in a message.
             """,
             Schema.object([
                 "start": Schema.string("From: \(Schema.date) (default: now)"),
@@ -271,10 +273,15 @@ extension CalendarToolbox {
                 "buffer_minutes": Schema.integer("Keep this much time free before and after events (default 0)", minimum: 0, maximum: 240),
                 "calendars": Schema.strings("Calendars whose events count as busy (default: all visible)"),
                 "limit": Schema.integer("Most slots to return (default 20)", minimum: 1, maximum: 200),
+                "other_time_zone": Schema.string("The other person's time zone, e.g. Asia/Tokyo: keep only times inside their working hours"),
+                "other_hours": Schema.string("Their working hours, HH:MM-HH:MM in their time zone (default 09:00-18:00)"),
+                "other_weekdays": Schema.strings("Their working days (default mon … fri)"),
+                "format": Schema.string("json (default), or text: also the slots as lines to paste in a message", enum: ["json", "text"]),
                 "time_zone": Self.zoneProperty,
             ]), kind: .read
         ) { arguments in
             let (start, end) = try self.period(arguments, defaultStart: self.now(), defaultLength: 7 * 86_400)
+            let other = try Self.otherHours(arguments)
             let duration = TimeInterval(try arguments.int("duration_minutes", default: 30, in: 5...1440) * 60)
             let settings = self.settings.current
             var hours: WorkHours? = try arguments.bool("work_hours_only") == false ? nil : settings.workHours
@@ -290,16 +297,43 @@ extension CalendarToolbox {
             }
             let events = try self.events(from: start.addingTimeInterval(-86_400), to: end.addingTimeInterval(86_400), calendarIDs: self.calendarIDs(arguments))
             let buffer = TimeInterval(try arguments.int("buffer_minutes", default: 0, in: 0...240) * 60)
-            let slots = FreeTime.slots(events: events, from: start, to: end, duration: duration, hours: hours, buffer: buffer, calendar: arguments.calendar)
+            var slots = FreeTime.slots(events: events, from: start, to: end, duration: duration, hours: hours, buffer: buffer, calendar: arguments.calendar)
+            if let other { slots = FreeTime.within(slots, hours: other.hours, calendar: other.calendar, duration: duration) }
             let limit = try arguments.int("limit", default: 20, in: 1...200)
+            let text = try arguments.string("format")?.lowercased() == "text"
+                ? FreeTime.text(Array(slots.prefix(limit)), calendar: arguments.calendar, other: other?.calendar.timeZone) : nil
             return ToolReply(
                 json: .obj([
                     ("slots", .array(slots.prefix(limit).map(Render.slot))),
                     ("more", slots.count > limit ? .int(Int64(slots.count - limit)) : nil),
+                    ("text", text.map(JSON.string)),
+                    ("other_time_zone", other.map { .string($0.calendar.timeZone.identifier) }),
                     ("hours", hours.map { .string("\(WorkHours.text($0.start))–\(WorkHours.text($0.end)) \($0.weekdays.sorted().map { Recurrence.weekdayNames[$0] }.joined(separator: " "))") }),
                 ]),
                 summary: plural(slots.count, "slot"))
         }
+    }
+
+    /// The other person's working hours and calendar, when `other_time_zone` is given.
+    static func otherHours(_ arguments: Arguments) throws -> (hours: WorkHours, calendar: Calendar)? {
+        guard let zone = try arguments.string("other_time_zone") else {
+            if arguments.has("other_hours") || arguments.has("other_weekdays") { throw ToolError("other_hours and other_weekdays need other_time_zone") }
+            return nil
+        }
+        guard let timeZone = TimeZone(identifier: zone) else { throw ToolError("other_time_zone \"\(zone)\" is not a time zone (use names like Asia/Tokyo)") }
+        var hours = WorkHours()
+        if let text = try arguments.string("other_hours") {
+            let bounds = text.split(whereSeparator: { "-–— ".contains($0) }).map(String.init)
+            guard bounds.count == 2, let from = WorkHours.minutes(bounds[0]), let to = WorkHours.minutes(bounds[1]), to > from else {
+                throw ToolError("other_hours must be HH:MM-HH:MM, e.g. 09:00-17:30")
+            }
+            hours.start = from
+            hours.end = to
+        }
+        if let days = try arguments.weekdays("other_weekdays") { hours.weekdays = Set(days) }
+        var calendar = Calendar.current
+        calendar.timeZone = timeZone
+        return (hours, calendar)
     }
 
     // MARK: find_conflicts

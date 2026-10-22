@@ -245,3 +245,63 @@ public struct TimeStatistics: Sendable {
         longest = Array(timed.sorted { $0.duration > $1.duration }.prefix(5))
     }
 }
+
+extension FreeTime {
+    /// The parts of `slots` inside someone else's working hours (`hours`, read in `calendar`'s time zone) that last
+    /// at least `duration`.
+    public static func within(_ slots: [DateInterval], hours: WorkHours, calendar: Calendar, duration: TimeInterval) -> [DateInterval] {
+        var results: [DateInterval] = []
+        for slot in slots {
+            var day = calendar.startOfDay(for: slot.start)
+            while day < slot.end {
+                defer { day = calendar.date(byAdding: .day, value: 1, to: day) ?? slot.end }
+                guard hours.weekdays.contains(calendar.component(.weekday, from: day)), hours.end > hours.start,
+                    let open = calendar.date(byAdding: .minute, value: hours.start, to: day),
+                    let close = calendar.date(byAdding: .minute, value: hours.end, to: day)
+                else { continue }
+                let start = max(open, slot.start)
+                let end = min(close, slot.end)
+                if end.timeIntervalSince(start) >= duration { results.append(DateInterval(start: start, end: end)) }
+            }
+        }
+        return results
+    }
+
+    /// Slots as lines to paste in a message, one per day: "Tue 21 Oct: 14:00–16:00, 16:30–18:00 CEST", with the
+    /// same times in `other`'s zone after each when given ("(21:00–23:00 JST)").
+    public static func text(_ slots: [DateInterval], calendar: Calendar, other: TimeZone? = nil, locale: Locale = .current) -> String {
+        func formatter(_ format: String, _ zone: TimeZone) -> DateFormatter {
+            let formatter = DateFormatter()
+            formatter.locale = locale
+            formatter.timeZone = zone
+            formatter.setLocalizedDateFormatFromTemplate(format)
+            return formatter
+        }
+        let dayFormat = formatter("EEEdMMM", calendar.timeZone)
+        let time = formatter("HHmm", calendar.timeZone)
+        let otherTime = other.map { formatter("HHmm", $0) }
+        func zoneName(_ zone: TimeZone, _ date: Date) -> String { zone.abbreviation(for: date) ?? zone.identifier }
+        var lines: [String] = []
+        var currentDay: Date?
+        var parts: [String] = []
+        func flush() {
+            guard let currentDay, !parts.isEmpty else { return }
+            lines.append("\(dayFormat.string(from: currentDay)): \(parts.joined(separator: ", ")) \(zoneName(calendar.timeZone, currentDay))")
+        }
+        for slot in slots {
+            let day = calendar.startOfDay(for: slot.start)
+            if day != currentDay {
+                flush()
+                currentDay = day
+                parts = []
+            }
+            var part = "\(time.string(from: slot.start))–\(time.string(from: slot.end))"
+            if let other, let otherTime {
+                part += " (\(otherTime.string(from: slot.start))–\(otherTime.string(from: slot.end)) \(zoneName(other, slot.start)))"
+            }
+            parts.append(part)
+        }
+        flush()
+        return lines.joined(separator: "\n")
+    }
+}
