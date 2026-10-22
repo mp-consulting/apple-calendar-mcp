@@ -4,7 +4,7 @@ import MCP
 
 extension CalendarToolbox {
     var readTools: [ToolDefinition] {
-        [listCalendars, listEvents, searchEvents, getEvent, agenda, findFreeTime, findConflicts, pendingInvitations, statistics]
+        [listCalendars, listEvents, searchEvents, getEvent, agenda, findFreeTime, findConflicts, findDuplicates, pendingInvitations, statistics]
     }
 
     static let calendarsProperty = Schema.strings("Calendars by id, title, or Account/Title (default: all, except those hidden in settings)")
@@ -26,7 +26,10 @@ extension CalendarToolbox {
     var listCalendars: ToolDefinition {
         ToolDefinition(
             "list_calendars", "List calendars",
-            "Calendars with their account, colour, whether they can be changed, and which one new events go to by default.",
+            """
+            Calendars with their account, colour, whether they can be changed (read_only: Calendar does not allow it, \
+            or the user lets Claude only read it), and which one new events go to by default.
+            """,
             Schema.object([:]), kind: .read
         ) { _ in
             let all = try self.backend.calendars()
@@ -181,7 +184,8 @@ extension CalendarToolbox {
             "agenda", "Agenda",
             """
             A day (or a few) in one call: the events in order, what is on now and next, conflicts, the free time left \
-            within working hours, invitations still waiting for your answer, and totals. Start here for "what's my day".
+            within working hours, invitations still waiting for your answer, reminders due (with Reminders access), \
+            and totals. Start here for "what's my day".
             """,
             Schema.object([
                 "date": Schema.string("The first day, YYYY-MM-DD or today/tomorrow (default: today)"),
@@ -204,6 +208,8 @@ extension CalendarToolbox {
                 events: events, from: max(first, now), to: end, duration: 15 * 60, hours: settings.workHours, calendar: calendar)
             let conflicts = Conflicts.find(events)
             let pending = all.filter { $0.myStatus == .pending }
+            // Reminders due by the end of the period (overdue ones too); none without Reminders access.
+            let due = (try? self.visibleReminders(ReminderQuery(dueBefore: end))) ?? []
             let meetings = timed.filter(\.hasOtherAttendees)
             let meetingHours = meetings.reduce(0) { $0 + $1.duration } / 3600
             let busyHours = Busy.intervals(timed).reduce(0) { $0 + $1.duration } / 3600
@@ -227,6 +233,7 @@ extension CalendarToolbox {
             pairs.append(("conflicts", conflicts.isEmpty ? nil : JSON.array(conflicts.map(Self.conflict))))
             pairs.append(("free", JSON.array(free.map(Render.slot))))
             pairs.append(("pending_invitations", pending.isEmpty ? nil : JSON.array(pending.map(Render.event))))
+            pairs.append(("reminders_due", due.isEmpty ? nil : JSON.array(due.map { Render.reminder($0, now: now) })))
             return ToolReply(
                 json: .obj(pairs),
                 summary: plural(timed.count, "event") + ", " + (conflicts.isEmpty ? "no conflicts" : plural(conflicts.count, "conflict")))
@@ -250,7 +257,9 @@ extension CalendarToolbox {
             """
             Free slots of at least duration_minutes between busy events, within working hours by default (Settings), \
             with an optional buffer around events. Free, declined and cancelled events, and all-day events not marked \
-            busy, do not block time. Each slot is reported whole: any start inside it works.
+            busy, do not block time. Each slot is reported whole: any start inside it works. To meet someone in \
+            another time zone, pass other_time_zone (and other_hours): only times inside their working hours remain. \
+            format "text" adds the slots as lines to paste in a message.
             """,
             Schema.object([
                 "start": Schema.string("From: \(Schema.date) (default: now)"),
@@ -263,10 +272,15 @@ extension CalendarToolbox {
                 "buffer_minutes": Schema.integer("Keep this much time free before and after events (default 0)", minimum: 0, maximum: 240),
                 "calendars": Schema.strings("Calendars whose events count as busy (default: all visible)"),
                 "limit": Schema.integer("Most slots to return (default 20)", minimum: 1, maximum: 200),
+                "other_time_zone": Schema.string("The other person's time zone, e.g. Asia/Tokyo: keep only times inside their working hours"),
+                "other_hours": Schema.string("Their working hours, HH:MM-HH:MM in their time zone (default 09:00-18:00)"),
+                "other_weekdays": Schema.strings("Their working days (default mon … fri)"),
+                "format": Schema.string("json (default), or text: also the slots as lines to paste in a message", enum: ["json", "text"]),
                 "time_zone": Self.zoneProperty,
             ]), kind: .read
         ) { arguments in
             let (start, end) = try self.period(arguments, defaultStart: self.now(), defaultLength: 7 * 86_400)
+            let other = try Self.otherHours(arguments)
             let duration = TimeInterval(try arguments.int("duration_minutes", default: 30, in: 5...1440) * 60)
             let settings = self.settings.current
             var hours: WorkHours? = try arguments.bool("work_hours_only") == false ? nil : settings.workHours
@@ -282,16 +296,42 @@ extension CalendarToolbox {
             }
             let events = try self.events(from: start.addingTimeInterval(-86_400), to: end.addingTimeInterval(86_400), calendarIDs: self.calendarIDs(arguments))
             let buffer = TimeInterval(try arguments.int("buffer_minutes", default: 0, in: 0...240) * 60)
-            let slots = FreeTime.slots(events: events, from: start, to: end, duration: duration, hours: hours, buffer: buffer, calendar: arguments.calendar)
+            var slots = FreeTime.slots(events: events, from: start, to: end, duration: duration, hours: hours, buffer: buffer, calendar: arguments.calendar)
+            if let other { slots = FreeTime.within(slots, hours: other.hours, calendar: other.calendar, duration: duration) }
             let limit = try arguments.int("limit", default: 20, in: 1...200)
+            let text = try arguments.string("format")?.lowercased() == "text"
+                ? FreeTime.text(Array(slots.prefix(limit)), calendar: arguments.calendar, other: other?.calendar.timeZone) : nil
             return ToolReply(
                 json: .obj([
                     ("slots", .array(slots.prefix(limit).map(Render.slot))),
                     ("more", slots.count > limit ? .int(Int64(slots.count - limit)) : nil),
+                    ("text", text.map(JSON.string)),
+                    ("other_time_zone", other.map { .string($0.calendar.timeZone.identifier) }),
                     ("hours", hours.map { .string("\(WorkHours.text($0.start))–\(WorkHours.text($0.end)) \($0.weekdays.sorted().map { Recurrence.weekdayNames[$0] }.joined(separator: " "))") }),
                 ]),
                 summary: plural(slots.count, "slot"))
         }
+    }
+
+    /// The other person's working hours and calendar, when `other_time_zone` is given.
+    static func otherHours(_ arguments: Arguments) throws -> (hours: WorkHours, calendar: Calendar)? {
+        guard let timeZone = try arguments.timeZone("other_time_zone") else {
+            if arguments.has("other_hours") || arguments.has("other_weekdays") { throw ToolError("other_hours and other_weekdays need other_time_zone") }
+            return nil
+        }
+        var hours = WorkHours()
+        if let text = try arguments.string("other_hours") {
+            let bounds = text.split(whereSeparator: { "-–— ".contains($0) }).map(String.init)
+            guard bounds.count == 2, let from = WorkHours.minutes(bounds[0]), let to = WorkHours.minutes(bounds[1]), to > from else {
+                throw ToolError("other_hours must be HH:MM-HH:MM, e.g. 09:00-17:30")
+            }
+            hours.start = from
+            hours.end = to
+        }
+        if let days = try arguments.weekdays("other_weekdays") { hours.weekdays = Set(days) }
+        var calendar = Calendar.current
+        calendar.timeZone = timeZone
+        return (hours, calendar)
     }
 
     // MARK: find_conflicts
@@ -310,6 +350,62 @@ extension CalendarToolbox {
             let (start, end) = try self.period(arguments, defaultStart: self.startOfToday, defaultLength: 14 * 86_400)
             let pairs = Conflicts.find(try self.events(from: start, to: end, calendarIDs: self.calendarIDs(arguments)))
             return ToolReply(json: .obj([("conflicts", .array(pairs.map(Self.conflict)))]), summary: plural(pairs.count, "conflict"))
+        }
+    }
+
+    // MARK: find_duplicates
+
+    var findDuplicates: ToolDefinition {
+        ToolDefinition(
+            "find_duplicates", "Find duplicates",
+            """
+            Events entered more than once (same title, start and end, in one calendar or several: an invitation \
+            imported twice, a subscription copied by hand, a sync gone wrong). For each, the copy to keep and the \
+            copies to remove; delete_ids lists those that can be deleted safely (not read-only, and not a meeting \
+            others are invited to). Repeating duplicates are reported once: delete them with span future. \
+            Default: today to 90 days ahead.
+            """,
+            Schema.object([
+                "start": Schema.string("From: \(Schema.date) (default: today)"),
+                "end": Schema.string("Until (default: 90 days after start)"),
+                "calendars": Self.calendarsProperty,
+                "limit": Schema.integer("Most groups to return (default 50)", minimum: 1, maximum: 500),
+                "time_zone": Self.zoneProperty,
+            ]), kind: .read
+        ) { arguments in
+            let (start, end) = try self.period(arguments, defaultStart: self.startOfToday, defaultLength: 90 * 86_400)
+            let visible = try self.visibleCalendars()
+            let writable = Set(visible.filter(\.writable).map(\.id))
+            let ids = try self.containerIDs(arguments, key: "calendars", noun: "calendar", visible: { visible })
+            let events = try self.events(from: start, to: end, calendarIDs: ids)
+            let groups = Duplicates.find(events) { writable.contains($0.calendarID) }
+            let limit = try arguments.int("limit", default: 50, in: 1...500)
+            var deleteIDs: [String] = []
+            func copy(_ event: Event) -> JSON {
+                let safe = writable.contains(event.calendarID) && !event.hasOtherAttendees
+                if safe { deleteIDs.append(event.id) }
+                return .obj([
+                    ("id", .string(event.id)), ("calendar", .string(event.calendarTitle)),
+                    ("deletable", safe ? nil : .bool(false)),
+                    ("why_not", safe ? nil : .string(event.hasOtherAttendees ? "others are invited: deleting may tell them" : "read-only calendar")),
+                ])
+            }
+            let rows = groups.prefix(limit).map { group -> JSON in
+                .obj([
+                    ("title", .string(group.keep.title)),
+                ] + Render.times(group.keep) + [
+                    ("recurring", group.keep.isRecurring ? .bool(true) : nil),
+                    ("occurrences", group.occurrences > 1 ? .int(Int64(group.occurrences)) : nil),
+                    ("keep", .obj([("id", .string(group.keep.id)), ("calendar", .string(group.keep.calendarTitle))])),
+                    ("remove", .array(group.copies.map(copy))),
+                ])
+            }
+            return ToolReply(
+                json: .obj([
+                    ("groups", .array(rows)), ("more", groups.count > limit ? .int(Int64(groups.count - limit)) : nil),
+                    ("delete_ids", .array(deleteIDs.map(JSON.string))),
+                ]),
+                summary: plural(groups.count, "duplicate group"))
         }
     }
 

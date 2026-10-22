@@ -25,8 +25,8 @@ The companion of [Apple Mail MCP](https://github.com/mp-consulting/apple-mail-mc
 
 <p align="center">
   <picture><source media="(prefers-color-scheme: light)" srcset="docs/images/tab-calendar-light.png"><img src="docs/images/tab-calendar.png" width="300" alt="Calendar tab: a shared event change waiting for approval, two more requests below, today's events with what is on now and next, recent activity"></picture>
-  <picture><source media="(prefers-color-scheme: light)" srcset="docs/images/tab-claude-light.png"><img src="docs/images/tab-claude.png" width="300" alt="Claude tab: Claude Code and the Claude app, the eight skills by slash command"></picture>
-  <picture><source media="(prefers-color-scheme: light)" srcset="docs/images/tab-settings-light.png"><img src="docs/images/tab-settings.png" width="300" alt="Settings tab: delete and shared-event policies, working hours, which calendars Claude can see"></picture>
+  <picture><source media="(prefers-color-scheme: light)" srcset="docs/images/tab-claude-light.png"><img src="docs/images/tab-claude.png" width="300" alt="Claude tab: Claude Code and the Claude app, the nine skills by slash command"></picture>
+  <picture><source media="(prefers-color-scheme: light)" srcset="docs/images/tab-settings-light.png"><img src="docs/images/tab-settings.png" width="300" alt="Settings tab: delete and shared-event policies, working hours, what Claude may do with each calendar and reminder list"></picture>
 </p>
 
 ## Any calendar account, ready for AI
@@ -51,8 +51,12 @@ return in milliseconds, repeating events expand exactly as Calendar shows them, 
 - **Free time that knows your week**: working hours, buffers between meetings, all-day and declined events
   handled the way Calendar shows them.
 - **Safe by default**: deleting asks first, changes to events other people are invited to ask first, every change
-  can be undone, and calendars you hide are never shown to Claude.
-- **One permission**: Calendars, given once to the menu bar app. No Full Disk Access, no Automation.
+  can be undone, and each calendar is yours to set: Claude may change it, only read it, or never see it.
+- **Many changes, one OK**: a week of focus blocks or a rescheduled afternoon is one call, one approval and one
+  undo.
+- **Reminders too**: with Reminders access, Claude lists, adds and ticks off reminders, and the agenda shows what
+  is due.
+- **One permission** (two with Reminders): given once to the menu bar app. No Full Disk Access, no Automation.
 - **No passwords, no cloud**: everything stays on your Mac.
 
 ## Install
@@ -90,29 +94,35 @@ this project's app. If the app is not running, the server opens it in the backgr
 | Permission | Why | Where |
 |---|---|---|
 | **Calendars › Full Access** for Apple Calendar MCP | Read and change events | Asked once by the app; System Settings › Privacy & Security › Calendars |
+| **Reminders › Full Access** (optional) | Read, add and complete reminders | Asked when you turn Reminders on in the app's Settings tab; System Settings › Privacy & Security › Reminders |
 
 ## What Claude can do
 
 | Tool | What it does |
 |---|---|
-| `agenda` | Today (or the next days) in one call: what's now and next, conflicts, free time left, open invitations |
+| `agenda` | Today (or the next days) in one call: what's now and next, conflicts, free time left, open invitations, reminders due |
 | `list_events` | Events in a period, from all calendars or some, repeating ones expanded |
 | `search_events` | Text, person, place, calendar, dates, video calls, status; or counts per calendar, month, weekday or person with `group_by` |
 | `get_event` | One event in full: notes, attendees and their answers, alarms, repeat rule, video link |
-| `find_free_time` | Slots of a given length within your working hours, with buffers, across every calendar that counts |
+| `find_free_time` | Slots of a given length within your working hours, with buffers, across every calendar that counts; within someone else's working hours in their time zone too; as text to paste in a message |
 | `find_conflicts` | Overlapping events that both take the time |
+| `find_duplicates` | Events entered twice, which copy to keep, and which copies can safely go |
 | `pending_invitations` | Invitations you haven't answered |
 | `respond_to_invitation` | Accept, decline or answer "maybe" to an invitation; Calendar sends the answer to the organizer |
 | `calendar_statistics` | Where time went: per calendar, weekday, hour and person, meeting load, back-to-back meetings |
 | `list_calendars` | Calendars with their account, colour and whether they can be changed |
 | `create_event`, `update_event`, `delete_event` | Add, change, move or delete events, one occurrence or the whole series, with alarms and repeat rules |
+| `create_events`, `update_events` | Many events in one call, checked before any change, one approval and one undo for all of them |
+| `list_reminders`, `create_reminder`, `update_reminder`, `delete_reminders` | Reminders: what's open or overdue, add one with a due day or time, tick it off, move it to another list |
 | `undo_change` | Lists recent changes and puts one back |
-| `import_ics`, `export_events` | Add events from an `.ics` file (an invitation saved from Mail), or write events to `.ics`, CSV or JSON |
+| `import_ics`, `export_events` | Add events from an `.ics` file (an invitation saved from Mail), or write events to `.ics`, CSV or JSON: free/busy only, or as an invitation to attach to an email |
 | `open_in_calendar` | Show an event or a day in Calendar |
 
 Event ids are EventKit's own; one occurrence of a repeating event is `<id>#<start in Unix seconds>`.
 
-EventKit cannot invite people: invite them in Calendar. Invitations to you can be answered with
+EventKit cannot invite people from Calendar. Invite them in Calendar, or by email: `export_events` with `invite`
+writes a standard invitation they can accept or decline, and the `calendar-invite-by-mail` skill attaches it to a
+draft in Mail (with [Apple Mail MCP](https://github.com/mp-consulting/apple-mail-mcp)). Invitations to you can be answered with
 `respond_to_invitation`, which uses the same (undocumented) EventKit call as Calendar; the account sends the answer
 to the organizer, and the app asks you first.
 
@@ -128,9 +138,10 @@ what would change; nothing happens without a click on **OK**.
 - **Delete policy** (Settings): *Ask me first* (the default), *Delete right away*, or *Never delete*.
 - **Shared events**: changes to events with other attendees ask first by default, because their calendar server
   may tell them.
-- **Undo**: every change can be put back with `undo_change`. A deleted event comes back without its attendees
-  (EventKit cannot invite them again).
-- **Hidden calendars**: calendars you hide in Settings are never read, listed or changed.
+- **Undo**: every change can be put back with `undo_change`, a whole batch with one id. A deleted event comes back
+  without its attendees (EventKit cannot invite them again).
+- **Each calendar and reminder list** (Settings): *Read and change*, *Read only* (Claude never adds, moves,
+  changes or deletes anything there), or *Hidden* (never read, listed or changed).
 - **Batch limits**: at most 50 events per change by default.
 - **Read-only mode**: `apple-calendar-mcp --read-only` offers only the reading tools.
 - **Activity**: every tool call is listed in the menu bar app (never with event details).
@@ -149,6 +160,7 @@ Pick them in the panel's **Claude** tab: each one shows what it does and whether
 | `/calendar-time-audit` | "Where did my time go this month?" |
 | `/calendar-cleanup` | "Find duplicates and conflicts in my calendar and clean them up." |
 | `/calendar-invite-import` | "Add this flight confirmation to my calendar." |
+| `/calendar-invite-by-mail` | "Invite Sam and Priya to Thursday's planning session." |
 
 The skills are also served as MCP prompts (in Claude Code: `/mcp__apple-calendar__calendar-daily-brief` and so
 on), and two resources, `calendar://today` and `calendar://upcoming`, notify subscribed clients when the day changes.

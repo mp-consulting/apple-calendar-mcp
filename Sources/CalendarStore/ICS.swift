@@ -215,8 +215,11 @@ public enum ICS {
 
     // MARK: Writing
 
-    public static func write(_ events: [Event], calendar: Calendar = .current, now: Date = Date()) -> String {
+    /// `method` REQUEST makes an invitation (iTIP): attendees are asked to answer the organizer.
+    public static func write(_ events: [Event], calendar: Calendar = .current, now: Date = Date(), method: String? = nil) -> String {
         var lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//MP Consulting//Apple Calendar MCP//EN", "CALSCALE:GREGORIAN"]
+        if let method { lines.append("METHOD:\(method)") }
+        let rsvp = method == "REQUEST" ? ";ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE" : ""
         for event in events {
             lines.append("BEGIN:VEVENT")
             lines.append("UID:\(escape(event.externalID ?? event.eventID))")
@@ -236,13 +239,14 @@ public enum ICS {
             if let url = event.url { lines.append("URL:\(url)") }
             if event.availability == .free { lines.append("TRANSP:TRANSPARENT") }
             if event.status == .cancelled { lines.append("STATUS:CANCELLED") }
+            if method == "REQUEST" { lines += ["SEQUENCE:0", "STATUS:CONFIRMED"] }
             if let rule = event.recurrence { lines.append("RRULE:\(rrule(rule, calendar: calendar))") }
             if let organizer = event.organizer, let email = organizer.email {
                 lines.append("ORGANIZER\(organizer.name.map { ";CN=\(quoted($0))" } ?? ""):mailto:\(email)")
             }
             for attendee in event.attendees {
                 guard let email = attendee.email else { continue }
-                lines.append("ATTENDEE\(attendee.name.map { ";CN=\(quoted($0))" } ?? ""):mailto:\(email)")
+                lines.append("ATTENDEE\(attendee.name.map { ";CN=\(quoted($0))" } ?? "")\(rsvp):mailto:\(email)")
             }
             for alarm in event.alarms {
                 lines += ["BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:\(escape(event.title))"]

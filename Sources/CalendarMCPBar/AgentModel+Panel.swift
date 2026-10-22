@@ -35,6 +35,8 @@ struct ApprovalWording {
 
     init(_ request: ApprovalRequest) {
         switch request.kind {
+        case .delete where request.subject == .reminder:
+            self.init(question: request.items.count > 1 ? "DELETE THESE REMINDERS?" : "DELETE THIS REMINDER?", yes: "Delete", no: "Don't")
         case .delete:
             let question = request.items.count > 1 ? "DELETE THESE EVENTS?" : request.attendees.isEmpty ? "DELETE THIS EVENT?" : "DELETE A SHARED EVENT?"
             self.init(question: question, yes: "Delete", no: "Don't")
@@ -168,7 +170,7 @@ extension AgentModel {
 
     func perform(_ item: AttentionItem) {
         switch item.fix {
-        case .allowCalendar: Task { await requestCalendarAccess() }
+        case .allowCalendar: Task { await requestAccess() }
         case .privacySettings: openCalendarPrivacySettings()
         case .claudeTab: panelTab = .claude
         case .dismissError:

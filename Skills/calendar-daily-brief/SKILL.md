@@ -21,11 +21,13 @@ reads come from EventKit through the menu bar app and never change anything.
      (a document to read, a decision to make, travel time);
    - **conflicts** (`conflicts`): the two events and how long they overlap;
    - **free time** (`free`): the longest gaps, rounded to the quarter hour;
-   - **invitations to answer** (`pending_invitations`): title, organizer, when.
+   - **invitations to answer** (`pending_invitations`): title, organizer, when;
+   - **reminders due** (`reminders_due`, when the user gave Reminders access): overdue ones first.
 4. **Offer actions**, then wait for the user to choose:
    - move or shorten an event (`update_event`), block focus time in a gap (the `calendar-focus-time` skill),
    - prepare a meeting (the `calendar-meeting-prep` skill),
    - answer an invitation (`respond_to_invitation`: accepted, declined or tentative),
+   - tick off a reminder (`update_reminder` with `completed: true`) or add one (`create_reminder`),
    - open something in Calendar (`open_in_calendar`).
 
 ## Rules

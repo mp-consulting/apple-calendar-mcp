@@ -339,33 +339,48 @@ struct EventRow: View {
         let isNow = event.start <= now && event.end > now
         let isPast = event.end <= now
         let isNext = model.nextEvent?.id == event.id
-        Button { model.open(event) } label: {
-            HStack(alignment: .center, spacing: 10) {
-                VStack(alignment: .trailing, spacing: 0) {
-                    Text(event.start, format: .dateTime.hour().minute()).font(.caption.monospacedDigit())
-                    Text(event.end, format: .dateTime.hour().minute()).font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+        // The Join button sits beside the row's own button, not inside it: a button in a button's label is unreliable.
+        HStack(spacing: 8) {
+            Button { model.open(event) } label: {
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text(event.start, format: .dateTime.hour().minute()).font(.caption.monospacedDigit())
+                        Text(event.end, format: .dateTime.hour().minute()).font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                    }
+                    .frame(width: 44, alignment: .trailing)
+                    RoundedRectangle(cornerRadius: 1.5).fill(model.color(of: event)).frame(width: 3, height: 30)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(event.title).font(.callout).lineLimit(1)
+                        Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 6)
+                    if conflict { Image(systemName: "exclamationmark.2").font(.caption).foregroundStyle(.orange).help("Overlaps another event") }
+                    if isNow {
+                        Chip(text: "Now", tint: .green)
+                    } else if isNext {
+                        Chip(text: model.relative(event.start))
+                    }
                 }
-                .frame(width: 44, alignment: .trailing)
-                RoundedRectangle(cornerRadius: 1.5).fill(model.color(of: event)).frame(width: 3, height: 30)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(event.title).font(.callout).lineLimit(1)
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer(minLength: 6)
-                if conflict { Image(systemName: "exclamationmark.2").font(.caption).foregroundStyle(.orange).help("Overlaps another event") }
-                if isNow {
-                    Chip(text: "Now", tint: .green)
-                } else if isNext {
-                    Chip(text: model.relative(event.start))
-                }
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 4)
-            .opacity(isPast ? 0.5 : 1)
-            .contentShape(Rectangle())
+            .buttonStyle(PressableButtonStyle())
+            .help("Show in Calendar")
+            if let call = joinable(now: now) {
+                Button("Join") { NSWorkspace.shared.open(call) }
+                    .glassButton(prominent: isNow).controlSize(.small)
+                    .help("Join the video call (\(call.host() ?? "link"))")
+                    .accessibilityLabel("Join \(event.title)")
+            }
         }
-        .buttonStyle(PressableButtonStyle())
-        .help("Show in Calendar")
+        .padding(.horizontal, 16)
+        .padding(.vertical, 4)
+        .opacity(isPast ? 0.5 : 1)
+    }
+
+    /// The call link of an event that is on, or starts within 10 minutes.
+    private func joinable(now: Date) -> URL? {
+        guard event.end > now, event.start.timeIntervalSince(now) <= 600, let link = VideoLink.find(in: event) else { return nil }
+        return URL(string: link)
     }
 
     private var subtitle: String {
@@ -524,7 +539,8 @@ struct ApprovalBlock: View {
             }
             HStack {
                 if request.kind == .delete {
-                    Text("Calendar has no Trash; undo_change can bring it back.").font(.caption2).foregroundStyle(.secondary)
+                    Text(request.subject == .reminder ? "undo_change can bring it back." : "Calendar has no Trash; undo_change can bring it back.")
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button(wording.no, role: .cancel) { decide(false) }.glassButton()
@@ -743,23 +759,28 @@ struct SettingsTab: View {
         .padding(.horizontal, 16).padding(.vertical, 4)
         WeekdayPicker(selection: $model.settings.workdays).padding(.horizontal, 16).padding(.bottom, 4)
         SectionDivider()
-        SectionHeader("Calendars Claude can see") { Text("\(model.settings.visible(model.calendars).count) of \(model.calendars.count)") }
+        SectionHeader("What Claude can do with each calendar") { Text("\(model.settings.visible(model.calendars).count) of \(model.calendars.count) seen") }
         if model.calendars.isEmpty {
             Text("Allow Calendar access to choose.").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.vertical, 4)
         }
         ForEach(model.calendars) { calendar in
-            HStack(spacing: 8) {
-                Circle().fill(Color(hex: calendar.color)).frame(width: 8, height: 8)
-                Text(calendar.title).font(.callout)
-                Text(calendar.account + (calendar.writable ? "" : " · read-only")).font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Toggle("", isOn: Binding(
-                    get: { !model.settings.isHidden(calendar.id) },
-                    set: { model.settings.setHidden(calendar.id, !$0) }))
-                    .labelsHidden().toggleStyle(.switch).controlSize(.mini)
+            CalendarAccessRow(model: model, calendar: calendar)
+        }
+        SectionDivider()
+        SectionHeader("Reminders") {
+            if model.reminderAccess.canRead { Text("\(model.settings.visible(model.reminderLists).count) of \(model.reminderLists.count) seen") }
+        }
+        switch model.reminderAccess {
+        case .granted:
+            ForEach(model.reminderLists) { list in CalendarAccessRow(model: model, calendar: list) }
+        case .notDetermined:
+            Row(systemImage: "checklist", title: "Let Claude use Reminders", detail: "List, add and complete reminders. macOS asks once.") {
+                Button("Allow…") { Task { await model.requestAccess(to: .reminder) } }.glassButton().controlSize(.small)
             }
-            .padding(.horizontal, 16)
-            .frame(minHeight: 26)
+        case .writeOnly, .denied, .restricted, .unavailable:
+            Row(systemImage: "checklist", title: "Reminders access is off", detail: "Turn on Full Access in Privacy & Security › Reminders.") {
+                Button("Open Settings…") { model.openPrivacySettings("Privacy_Reminders") }.glassButton().controlSize(.small)
+            }
         }
         SectionDivider()
         SectionHeader("App")
@@ -775,6 +796,35 @@ struct SettingsTab: View {
             .font(.caption).foregroundStyle(.tertiary)
             .padding(.horizontal, 16).padding(.top, 8)
             .onChange(of: model.settings) { model.save() }
+    }
+}
+
+/// One calendar (or reminder list) and what Claude may do with it: change, only read, or not see.
+struct CalendarAccessRow: View {
+    @Bindable var model: AgentModel
+    let calendar: CalendarInfo
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle().fill(Color(hex: calendar.color)).frame(width: 8, height: 8)
+            Text(calendar.title).font(.callout).lineLimit(1)
+            Text(calendar.account).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            Spacer()
+            Picker("", selection: Binding(
+                get: { model.settings.access(calendar.id) == .read && !calendar.writable ? .change : model.settings.access(calendar.id) },
+                set: { model.settings.setAccess(calendar.id, $0) }))
+            {
+                Text(calendar.writable ? "Read and change" : "Read (read-only)").tag(Settings.CalendarAccess.change)
+                if calendar.writable { Text("Read only").tag(Settings.CalendarAccess.read) }
+                Text("Hidden").tag(Settings.CalendarAccess.hidden)
+            }
+            .labelsHidden()
+            .controlSize(.small)
+            .fixedSize()
+            .accessibilityLabel("Claude's access to \(calendar.title)")
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: 26)
     }
 }
 
@@ -890,6 +940,7 @@ struct SettingsView: View {
             }
             Section("Calendar access") {
                 LabeledContent("Status") { Text(EventKitBackend.explain(model.access)) }
+                LabeledContent("Reminders") { Text(EventKitBackend.explainReminders(model.reminderAccess)) }
                 Button("Open Privacy & Security › Calendars…") { model.openCalendarPrivacySettings() }
             }
         }

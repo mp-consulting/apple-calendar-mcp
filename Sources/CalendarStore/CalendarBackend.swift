@@ -17,6 +17,16 @@ public protocol CalendarBackend: Sendable {
     func respond(_ ref: EventRef, _ answer: InvitationAnswer) throws -> Event
     /// Grows whenever the calendar database changes (in this process or elsewhere).
     func changeCount() -> Int
+
+    // Reminders: the same database, with a permission of its own.
+    func reminderAccess() -> AccessState
+    func reminderLists() throws -> [CalendarInfo]
+    /// Reminders matching `query`, sorted by due date.
+    func reminders(_ query: ReminderQuery) throws -> [Reminder]
+    func reminder(_ id: String) throws -> Reminder?
+    func createReminder(_ draft: ReminderDraft) throws -> Reminder
+    func updateReminder(_ id: String, _ change: ReminderChange) throws -> Reminder
+    func deleteReminder(_ id: String) throws
 }
 
 public struct CalendarError: Error, CustomStringConvertible, Sendable, Equatable {
@@ -28,6 +38,10 @@ public struct CalendarError: Error, CustomStringConvertible, Sendable, Equatable
     }
 
     public static func readOnly(_ title: String) -> CalendarError { CalendarError("\"\(title)\" is read-only.") }
+
+    public static func reminderNotFound(_ id: String) -> CalendarError {
+        CalendarError("No reminder with id \(id). It may have been deleted; list the reminders again.")
+    }
 
     public static let endBeforeStart = CalendarError("The end is before the start.")
 }

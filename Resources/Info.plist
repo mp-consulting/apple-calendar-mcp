@@ -28,6 +28,10 @@
 	<true/>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Apple Calendar MCP reads your calendars and adds or changes events when you ask your AI assistant to. Nothing leaves your Mac.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Apple Calendar MCP reads your reminders and adds, completes or changes them when you ask your AI assistant to. Nothing leaves your Mac.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Apple Calendar MCP reads your reminders and adds, completes or changes them when you ask your AI assistant to. Nothing leaves your Mac.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>Apple Calendar MCP reads your calendars and adds or changes events when you ask your AI assistant to. Nothing leaves your Mac.</string>
 	<key>NSHumanReadableCopyright</key>

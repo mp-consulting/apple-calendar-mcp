@@ -67,7 +67,38 @@ public enum StandardFixture {
         ]
     }
 
+    public static let inbox = CalendarInfo(id: "list-reminders", title: "Reminders", account: "iCloud", kind: .calDAV, color: "#0A84FF", writable: true, isDefault: true)
+    public static let errands = CalendarInfo(id: "list-errands", title: "Errands", account: "iCloud", kind: .calDAV, color: "#FF9F0A", writable: true)
+
+    public static let reminderLists = [inbox, errands]
+
+    /// Reminders around the same week: one overdue, one due today, a few later, one without a date, one done.
+    public static func reminders(now: Date = Date(), calendar: Calendar = .current) -> [Reminder] {
+        let today = calendar.startOfDay(for: now)
+        func day(_ offset: Int, _ hour: Int? = nil) -> Date {
+            let date = calendar.date(byAdding: .day, value: offset, to: today)!
+            return hour.map { calendar.date(bySettingHour: $0, minute: 0, second: 0, of: date)! } ?? date
+        }
+        func make(_ id: Int, _ title: String, in list: CalendarInfo = inbox, due: Date? = nil, time: Bool = false, priority: Int = 0) -> Reminder {
+            Reminder(id: "DEMO-R\(id)", listID: list.id, listTitle: list.title, title: title, due: due, dueHasTime: time, priority: priority,
+                     created: day(-10))
+        }
+        var done = make(6, "Expense report for September", due: day(-2))
+        done.isCompleted = true
+        done.completed = day(-2, 16)
+        return [
+            make(1, "Book flights to Lisbon", due: day(-1), priority: 1),
+            make(2, "Send Northwind the pricing proposal", due: day(0, 17), time: true, priority: 1),
+            make(3, "Review Chloé's onboarding notes", due: day(1)),
+            make(4, "Buy a present for Mum", in: errands, due: day(2)),
+            make(5, "Renew passport", in: errands),
+            done,
+        ]
+    }
+
     public static func backend(now: Date = Date(), calendar: Calendar = .current) -> MemoryBackend {
-        MemoryBackend(calendars: calendars, events: events(now: now, calendar: calendar), calendar: calendar)
+        MemoryBackend(
+            calendars: calendars, events: events(now: now, calendar: calendar), reminderLists: reminderLists,
+            reminders: reminders(now: now, calendar: calendar), calendar: calendar)
     }
 }

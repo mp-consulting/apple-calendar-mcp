@@ -70,19 +70,8 @@ extension CalendarToolbox {
     }
 
     /// A calendar the user may change, by name; nil for the default one (checked visible and writable).
-    func targetCalendar(_ arguments: Arguments) throws -> CalendarInfo {
-        let visible = try visibleCalendars()
-        let calendar: CalendarInfo
-        if let name = try arguments.string("calendar") {
-            calendar = try resolveCalendar(name, in: visible)
-        } else {
-            guard let preferred = visible.defaultWritable else {
-                throw ToolError("No calendar can take new events; pass calendar (see list_calendars).")
-            }
-            calendar = preferred
-        }
-        guard calendar.writable else { throw ToolError("\"\(calendar.title)\" (\(calendar.account)) is read-only; pick another calendar.") }
-        return calendar
+    func targetCalendar(_ arguments: Arguments, in calendars: [CalendarInfo]? = nil) throws -> CalendarInfo {
+        try target(arguments, key: "calendar", in: calendars ?? visibleCalendars(), noun: "calendar")
     }
 
     /// Start and end from the arguments, for a new event or on top of `current`.
@@ -137,6 +126,72 @@ extension CalendarToolbox {
         return span
     }
 
+    /// A new event from the arguments of `create_event` (or one item of `create_events`), and its calendar; a batch
+    /// passes the visible calendars it read once.
+    func newEvent(_ arguments: Arguments, calendars: [CalendarInfo]? = nil) throws -> (EventDraft, CalendarInfo) {
+        let title = try arguments.requiredString("title")
+        let calendar = try targetCalendar(arguments, in: calendars)
+        let (startArgument, endArgument, allDay) = try times(arguments, current: nil)
+        guard let start = startArgument else { throw ToolError("start is required") }
+        let draft = EventDraft(
+            title: title, start: start, end: endArgument ?? start.addingTimeInterval(3600), isAllDay: allDay ?? false, calendarID: calendar.id,
+            timeZone: try arguments.string("time_zone"), location: try arguments.string("location"),
+            notes: try arguments.string("notes"), url: try arguments.string("url"), availability: try availability(arguments),
+            alarms: try alarms(arguments) ?? [], recurrence: try recurrence(arguments))
+        guard draft.end >= draft.start else { throw ToolError("end must be after start") }
+        return (draft, calendar)
+    }
+
+    /// A dry run's picture of a new event (no id or link yet).
+    static func preview(_ draft: EventDraft, in calendar: CalendarInfo) -> JSON {
+        let preview = Event(
+            eventID: "(new)", calendarID: calendar.id, calendarTitle: calendar.title, title: draft.title, start: draft.start, end: draft.end,
+            isAllDay: draft.isAllDay, timeZone: draft.timeZone, location: draft.location, notes: draft.notes, url: draft.url,
+            availability: draft.availability ?? (draft.isAllDay ? .free : .busy), alarms: draft.alarms, recurrence: draft.recurrence)
+        let detail = Render.detail(preview, notesLimit: 4000)
+        guard case .object(let pairs) = detail else { return detail }
+        return .object(pairs.filter { !["id", "link"].contains($0.0) })
+    }
+
+    /// What `update_event` (or one item of `update_events`) would do, checked but not done.
+    struct PlannedUpdate {
+        var ref: EventRef
+        var span: Span
+        var current: Event
+        var change: EventChange
+        var preview: Event
+        var description: String
+    }
+
+    func plannedUpdate(_ arguments: Arguments, calendars: [CalendarInfo]? = nil) throws -> PlannedUpdate {
+        let ref = try arguments.ref("id")
+        let span = try Self.span(arguments)
+        let current = try event(ref)
+        let calendars = try calendars ?? visibleCalendars()
+        try requireWritable([current], in: calendars)
+        let (start, end, allDay) = try times(arguments, current: current)
+        var change = EventChange(
+            title: try arguments.string("title"), start: start, end: end, isAllDay: allDay, timeZone: try arguments.string("time_zone"),
+            location: try arguments.clearableString("location"), notes: try arguments.clearableString("notes"),
+            url: try arguments.clearableString("url"), availability: try availability(arguments), alarms: try alarms(arguments),
+            recurrence: try recurrence(arguments), removeRecurrence: try arguments.bool("remove_repeat") ?? false)
+        var targetTitle: String?
+        if arguments.has("calendar") {
+            let target = try targetCalendar(arguments, in: calendars)
+            if target.id != current.calendarID {
+                change.calendarID = target.id
+                targetTitle = target.title
+            }
+        }
+        guard !change.isEmpty else { throw ToolError("Nothing to change: pass at least one field (title, start, end, location, …)") }
+        if (change.recurrence != nil || change.removeRecurrence) && span == .thisEvent && current.isRecurring {
+            throw ToolError("A repeat rule changes the series: pass span \"future\".")
+        }
+        var preview = change.applied(to: current)
+        if let targetTitle { preview.calendarTitle = targetTitle }
+        return PlannedUpdate(ref: ref, span: span, current: current, change: change, preview: preview, description: Self.describe(current, preview))
+    }
+
     // MARK: create_event
 
     var createEvent: ToolDefinition {
@@ -149,24 +204,9 @@ extension CalendarToolbox {
             """,
             Schema.object(Self.changeProperties, required: ["title", "start"]), kind: .change
         ) { arguments in
-            let title = try arguments.requiredString("title")
-            let calendar = try self.targetCalendar(arguments)
-            let (startArgument, endArgument, allDay) = try self.times(arguments, current: nil)
-            guard let start = startArgument else { throw ToolError("start is required") }
-            let draft = EventDraft(
-                title: title, start: start, end: endArgument ?? start.addingTimeInterval(3600), isAllDay: allDay ?? false, calendarID: calendar.id,
-                timeZone: try arguments.string("time_zone"), location: try arguments.string("location"),
-                notes: try arguments.string("notes"), url: try arguments.string("url"), availability: try self.availability(arguments),
-                alarms: try self.alarms(arguments) ?? [], recurrence: try self.recurrence(arguments))
-            guard draft.end >= draft.start else { throw ToolError("end must be after start") }
+            let (draft, calendar) = try self.newEvent(arguments)
             if try arguments.bool("dry_run") == true {
-                let preview = Event(
-                    eventID: "(new)", calendarID: calendar.id, calendarTitle: calendar.title, title: draft.title, start: draft.start, end: draft.end,
-                    isAllDay: draft.isAllDay, timeZone: draft.timeZone, location: draft.location, notes: draft.notes, url: draft.url,
-                    availability: draft.availability ?? (draft.isAllDay ? .free : .busy), alarms: draft.alarms, recurrence: draft.recurrence)
-                var detail = Render.detail(preview, notesLimit: 4000)
-                if case .object(let pairs) = detail { detail = .object(pairs.filter { !["id", "link"].contains($0.0) }) }
-                return ToolReply(json: .obj([("dry_run", .bool(true)), ("would_create", detail)]), summary: "dry run: 1 event")
+                return ToolReply(json: .obj([("dry_run", .bool(true)), ("would_create", Self.preview(draft, in: calendar))]), summary: "dry run: 1 event")
             }
             let created = try self.backend.create(draft)
             let record = ChangeRecord(tool: "create_event", kind: .created, before: nil, after: created)
@@ -193,46 +233,23 @@ extension CalendarToolbox {
             """,
             Schema.object(properties, required: ["id"]), kind: .change, idempotent: true
         ) { arguments in
-            let ref = try arguments.ref("id")
-            let span = try Self.span(arguments)
-            let current = try self.event(ref)
-            let (start, end, allDay) = try self.times(arguments, current: current)
-            var change = EventChange(
-                title: try arguments.string("title"), start: start, end: end, isAllDay: allDay, timeZone: try arguments.string("time_zone"),
-                location: try arguments.clearableString("location"), notes: try arguments.clearableString("notes"),
-                url: try arguments.clearableString("url"), availability: try self.availability(arguments), alarms: try self.alarms(arguments),
-                recurrence: try self.recurrence(arguments), removeRecurrence: try arguments.bool("remove_repeat") ?? false)
-            var targetTitle: String?
-            if arguments.has("calendar") {
-                let target = try self.targetCalendar(arguments)
-                if target.id != current.calendarID {
-                    change.calendarID = target.id
-                    targetTitle = target.title
-                }
-            }
-            guard !change.isEmpty else { throw ToolError("Nothing to change: pass at least one field (title, start, end, location, …)") }
-            if (change.recurrence != nil || change.removeRecurrence) && span == .thisEvent && current.isRecurring {
-                throw ToolError("A repeat rule changes the series: pass span \"future\".")
-            }
-            var preview = change.applied(to: current)
-            if let targetTitle { preview.calendarTitle = targetTitle }
-            let description = Self.describe(current, preview)
+            let plan = try self.plannedUpdate(arguments)
             if try arguments.bool("dry_run") == true {
                 return ToolReply(
                     json: .obj([
-                        ("dry_run", .bool(true)), ("event", Render.event(current)), ("would_change", .string(description)),
-                        ("after", Render.event(preview)),
-                    ] + self.approvalPairs(deleting: false, events: [current])),
-                    summary: "dry run: 1 event", event: current)
+                        ("dry_run", .bool(true)), ("event", Render.event(plan.current)), ("would_change", .string(plan.description)),
+                        ("after", Render.event(plan.preview)),
+                    ] + self.approvalPairs(deleting: false, events: [plan.current])),
+                    summary: "dry run: 1 event", event: plan.current)
             }
-            try await self.authorize(tool: "update_event", deleting: false, events: [current], detail: description)
-            let updated = try self.backend.update(ref, change, span: span)
-            let record = ChangeRecord(tool: "update_event", kind: .updated, span: span, before: current, after: updated)
+            try await self.authorize(tool: "update_event", deleting: false, events: [plan.current], detail: plan.description)
+            let updated = try self.backend.update(plan.ref, plan.change, span: plan.span)
+            let record = ChangeRecord(tool: "update_event", kind: .updated, span: plan.span, before: plan.current, after: updated)
             self.record([record])
             return ToolReply(
                 json: .obj([
-                    ("updated", Render.detail(updated, notesLimit: 4000)), ("changed", .string(description)),
-                    ("span", current.isRecurring ? .string(span.rawValue) : nil),
+                    ("updated", Render.detail(updated, notesLimit: 4000)), ("changed", .string(plan.description)),
+                    ("span", plan.current.isRecurring ? .string(plan.span.rawValue) : nil),
                     ("undo_id", self.undoID(record)),
                 ]),
                 summary: "updated 1 event", event: updated)
@@ -261,10 +278,7 @@ extension CalendarToolbox {
             try self.checkBatch(refs.count)
             let span = try Self.span(arguments)
             let events = try refs.map(self.event)
-            let calendars = try self.backend.calendars()
-            if let locked = events.first(where: { event in calendars.first { $0.id == event.calendarID }?.writable == false }) {
-                throw ToolError("\"\(locked.title)\" is in a read-only calendar (\(locked.calendarTitle)). Nothing was deleted.")
-            }
+            try self.requireWritable(events, nothing: "Nothing was deleted.")
             if try arguments.bool("dry_run") == true {
                 return ToolReply(
                     json: .obj([("dry_run", .bool(true)), ("would_delete", .array(events.map(Render.event)))]
@@ -272,27 +286,14 @@ extension CalendarToolbox {
                     summary: "dry run: \(plural(events.count, "event"))")
             }
             try await self.authorize(tool: "delete_event", deleting: true, events: events, detail: span == .futureEvents ? "Repeating events: this and every later occurrence." : nil)
-            var deleted: [Event] = []
-            var records: [ChangeRecord] = []
-            var failures: [JSON] = []
-            for (ref, event) in zip(refs, events) {
-                try Task.checkCancellation()
-                do {
-                    try self.backend.delete(ref, span: span)
-                    deleted.append(event)
-                    records.append(ChangeRecord(tool: "delete_event", kind: .deleted, span: span, before: event, after: nil))
-                } catch {
-                    failures.append(.obj([("id", .string(ref.string)), ("error", .string(String(describing: error)))]))
-                }
+            let pairs = Array(zip(refs, events))
+            let applied = try self.applyEach(pairs, label: { [("id", .string($0.0.string)), ("title", .string($0.1.title))] }) { pair, group in
+                try self.backend.delete(pair.0, span: span)
+                return (pair.1, ChangeRecord(tool: "delete_event", kind: .deleted, span: span, before: pair.1, after: nil, group: group))
             }
-            self.record(records)
             return ToolReply(
-                json: .obj([
-                    ("deleted", .array(deleted.map(Render.event))),
-                    ("failed", failures.isEmpty ? nil : .array(failures)),
-                    ("undo_ids", self.undoIDs(records)),
-                ]),
-                summary: "deleted \(plural(deleted.count, "event"))\(failures.isEmpty ? "" : ", \(failures.count) failed")")
+                json: .obj([("deleted", .array(applied.done.map(Render.event)))] + self.outcome(applied) + [("undo_ids", self.undoIDs(applied.records))]),
+                summary: Self.summary("deleted", "event", applied))
         }
     }
 
@@ -323,6 +324,7 @@ extension CalendarToolbox {
             guard current.myStatus != nil else {
                 throw ToolError("\"\(current.title)\" is not an invitation from someone else; there is nothing to answer.")
             }
+            try self.requireWritable([current], nothing: "It was not answered.")
             let answer = InvitationAnswer(status: status, comment: try arguments.string("comment"), span: try Self.span(arguments))
             let check = try self.backend.invitationCheck(ref)
             let checkJSON = JSON.obj([

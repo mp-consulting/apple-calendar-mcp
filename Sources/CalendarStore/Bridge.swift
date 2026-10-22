@@ -105,6 +105,13 @@ enum BridgeRequest: Codable, Sendable {
     case respond(EventRef, InvitationAnswer)
     case changeCount
     case approve(ApprovalRequest, timeout: TimeInterval)
+    case reminderAccess
+    case reminderLists
+    case reminders(ReminderQuery)
+    case reminder(String)
+    case createReminder(ReminderDraft)
+    case updateReminder(String, ReminderChange)
+    case deleteReminder(String)
 }
 
 /// The answer: the field matching the request, or `error`.
@@ -118,6 +125,8 @@ struct BridgeResponse: Codable, Sendable {
     var count: Int?
     var decision: ApprovalDecision?
     var invitationCheck: InvitationCheck?
+    var reminders: [Reminder]?
+    var reminder: Reminder?
     /// The app did not know the request: it is older than the server.
     var unknownRequest: Bool?
 }
@@ -329,6 +338,15 @@ public final class BridgeHost: @unchecked Sendable {
                 }
                 semaphore.wait()
                 return BridgeResponse(decision: box.value)
+            case .reminderAccess: return BridgeResponse(access: backend.reminderAccess())
+            case .reminderLists: return BridgeResponse(calendars: try backend.reminderLists())
+            case .reminders(let query): return BridgeResponse(reminders: try backend.reminders(query))
+            case .reminder(let id): return BridgeResponse(reminder: try backend.reminder(id))
+            case .createReminder(let draft): return BridgeResponse(reminder: try backend.createReminder(draft))
+            case let .updateReminder(id, change): return BridgeResponse(reminder: try backend.updateReminder(id, change))
+            case .deleteReminder(let id):
+                try backend.deleteReminder(id)
+                return BridgeResponse()
             }
         } catch {
             return BridgeResponse(error: String(describing: error))
@@ -508,4 +526,30 @@ public final class BridgeBackend: CalendarBackend, @unchecked Sendable {
     }
 
     public func changeCount() -> Int { (try? client.send(.changeCount, timeout: 5).count) ?? 0 }
+
+    public func reminderAccess() -> AccessState {
+        do {
+            return try client.send(.reminderAccess, timeout: 10).access ?? .unavailable("The app did not say.")
+        } catch {
+            return .unavailable(String(describing: error))
+        }
+    }
+
+    public func reminderLists() throws -> [CalendarInfo] { try client.send(.reminderLists).calendars ?? [] }
+
+    public func reminders(_ query: ReminderQuery) throws -> [Reminder] { try client.send(.reminders(query), timeout: 60).reminders ?? [] }
+
+    public func reminder(_ id: String) throws -> Reminder? { try client.send(.reminder(id)).reminder }
+
+    public func createReminder(_ draft: ReminderDraft) throws -> Reminder {
+        guard let reminder = try client.send(.createReminder(draft)).reminder else { throw CalendarError("The app did not return the new reminder.") }
+        return reminder
+    }
+
+    public func updateReminder(_ id: String, _ change: ReminderChange) throws -> Reminder {
+        guard let reminder = try client.send(.updateReminder(id, change)).reminder else { throw CalendarError("The app did not return the reminder.") }
+        return reminder
+    }
+
+    public func deleteReminder(_ id: String) throws { _ = try client.send(.deleteReminder(id)) }
 }

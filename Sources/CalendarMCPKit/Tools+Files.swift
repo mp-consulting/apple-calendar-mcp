@@ -98,8 +98,11 @@ extension CalendarToolbox {
         ToolDefinition(
             "export_events", "Export events",
             """
-            Write the events of a period (default: today and the next 30 days) to one file: .ics for other calendar \
-            apps, CSV for a spreadsheet, or JSON. Returns the path and the number of events, not their content.
+            Write the events of a period (default: today and the next 30 days), or the events ids names, to one file: \
+            .ics for other calendar apps, CSV for a spreadsheet, or JSON. Returns the path and the number of events, \
+            not their content. busy_only shares free/busy without titles or details. invite writes an .ics invitation \
+            (METHOD:REQUEST) from the user to the given addresses, to attach to an email: recipients can accept or \
+            decline, and their answers come back by email (EventKit cannot invite people from Calendar itself).
             """,
             Schema.object([
                 "path": Schema.string("The file to write (.ics, .csv or .json)"),
@@ -108,18 +111,56 @@ extension CalendarToolbox {
                 "end": Schema.string("Until (default: 30 days after start)"),
                 "calendars": Self.calendarsProperty,
                 "query": Schema.string("Only events matching these words (title, place, notes, people)"),
+                "ids": Schema.strings("Export exactly these events instead of a period"),
+                "busy_only": Schema.boolean("Only when you are busy: every event becomes \"Busy\", with no title, place, notes or people"),
+                "invite": .object([
+                    "type": "object",
+                    "description": "Write an invitation (.ics only) for these people, from the user",
+                    "properties": [
+                        "organizer": Schema.string("The user's email address, where answers go"),
+                        "organizer_name": Schema.string("The user's name"),
+                        "attendees": Schema.strings("Email addresses of the people invited"),
+                    ],
+                    "required": ["organizer", "attendees"],
+                    "additionalProperties": false,
+                ]),
                 "time_zone": Self.zoneProperty,
             ], required: ["path"]), kind: .fileWrite
         ) { arguments in
             let path = try self.pathGuard.checkWrite(arguments.requiredString("path"))
             let format = try arguments.string("format")?.lowercased() ?? (path as NSString).pathExtension.lowercased()
             guard ["ics", "csv", "json"].contains(format) else { throw ToolError("format must be ics, csv or json (or a path ending in one)") }
-            let (start, end) = try self.period(arguments, defaultStart: self.startOfToday, defaultLength: 31 * 86_400 - 1)
-            var events = try self.events(from: start, to: end, calendarIDs: self.calendarIDs(arguments))
+            var events: [Event]
+            if arguments.has("ids") {
+                events = try arguments.refs("ids").map(self.event)
+            } else {
+                let (start, end) = try self.period(arguments, defaultStart: self.startOfToday, defaultLength: 31 * 86_400 - 1)
+                events = try self.events(from: start, to: end, calendarIDs: self.calendarIDs(arguments))
+            }
             if let query = try arguments.string("query") { events = events.filter { EventText.matches($0, query) } }
+            if try arguments.bool("busy_only") == true { events = events.filter(Busy.blocks).map(Self.busyOnly) }
+            var method: String?
+            if case .object(let fields)? = arguments.values["invite"] {
+                guard format == "ics" else { throw ToolError("invite writes an .ics file") }
+                let invite = Arguments(fields)
+                let organizer = try invite.requiredString("organizer")
+                let attendees = try invite.strings("attendees")
+                guard !attendees.isEmpty else { throw ToolError("invite.attendees is required") }
+                for address in [organizer] + attendees where !Self.looksLikeEmail(address) {
+                    throw ToolError("\"\(address)\" is not an email address")
+                }
+                let host = Participant(name: try invite.string("organizer_name"), email: organizer, status: .accepted, role: .chair)
+                events = events.map { event in
+                    var copy = event
+                    copy.organizer = host
+                    copy.attendees = [host] + attendees.map { Participant(name: nil, email: $0, status: .pending) }
+                    return copy
+                }
+                method = "REQUEST"
+            }
             let text: String
             switch format {
-            case "ics": text = ICS.write(Self.seriesOnce(events), calendar: arguments.calendar)
+            case "ics": text = ICS.write(Self.seriesOnce(events), calendar: arguments.calendar, method: method)
             case "csv": text = Self.csv(events)
             default: text = JSON.array(events.map { Render.detail($0, notesLimit: 100_000) }).serialized(pretty: true) + "\n"
             }
@@ -128,9 +169,25 @@ extension CalendarToolbox {
             try Data(text.utf8).write(to: url, options: .atomic)
             try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
             return ToolReply(
-                json: .obj([("path", .string(path)), ("format", .string(format)), ("events", .int(Int64(events.count)))]),
+                json: .obj([
+                    ("path", .string(path)), ("format", .string(format)), ("events", .int(Int64(events.count))),
+                    ("invitation", method == nil ? nil : .bool(true)),
+                ]),
                 summary: "exported \(plural(events.count, "event")) to \(format)")
         }
+    }
+
+    /// `event` as free/busy only: its time and whether it repeats, nothing about what it is.
+    static func busyOnly(_ event: Event) -> Event {
+        Event(
+            eventID: event.eventID, externalID: event.externalID, calendarID: event.calendarID, calendarTitle: "", title: "Busy",
+            start: event.start, end: event.end, isAllDay: event.isAllDay, timeZone: event.timeZone, availability: event.availability,
+            recurrence: event.recurrence, isDetached: event.isDetached, occurrenceDate: event.occurrenceDate)
+    }
+
+    static func looksLikeEmail(_ text: String) -> Bool {
+        let parts = text.split(separator: "@")
+        return parts.count == 2 && !parts[0].isEmpty && parts[1].contains(".") && !text.contains(where: \.isWhitespace)
     }
 
     /// A repeating event once (its first occurrence in the period, which carries the rule) for iCalendar.

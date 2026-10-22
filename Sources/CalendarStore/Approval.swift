@@ -22,10 +22,16 @@ public struct ApprovalRequest: Codable, Sendable, Hashable, Identifiable {
     public var attendees: [String]
     /// What changes, when it is a change ("Moves to Wed 22 Oct 10:00").
     public var detail: String?
+    /// What is asked about: events when nil (what apps before 0.3 send and expect).
+    public var subject: Subject?
+
+    public enum Subject: String, Codable, Sendable {
+        case event, reminder
+    }
 
     public init(
         id: UUID = UUID(), created: Date = Date(), tool: String, client: String?, kind: Kind, title: String, items: [String],
-        attendees: [String] = [], detail: String? = nil
+        attendees: [String] = [], detail: String? = nil, subject: Subject? = nil
     ) {
         self.id = id
         self.created = created
@@ -36,6 +42,7 @@ public struct ApprovalRequest: Codable, Sendable, Hashable, Identifiable {
         self.items = items
         self.attendees = attendees
         self.detail = detail
+        self.subject = subject
     }
 }
 

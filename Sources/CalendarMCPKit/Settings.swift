@@ -42,6 +42,8 @@ public struct Settings: Codable, Sendable, Equatable {
     public var maxBatchSize = 50
     /// Calendars (by id) the server never reads, lists or changes.
     public var hiddenCalendars: [String] = []
+    /// Calendars (by id) Claude may read but not change: no new, moved, changed or deleted events there.
+    public var readOnlyCalendars: [String] = []
     /// Working hours, for free time and the agenda (`HH:MM`).
     public var workdayStart = "09:00"
     public var workdayEnd = "18:00"
@@ -90,6 +92,7 @@ public struct Settings: Codable, Sendable, Equatable {
         sharedEventPolicy = field(.sharedEventPolicy, defaults.sharedEventPolicy, unreadable: .never)
         maxBatchSize = field(.maxBatchSize, defaults.maxBatchSize)
         hiddenCalendars = field(.hiddenCalendars, [])
+        readOnlyCalendars = field(.readOnlyCalendars, [])
         workdayStart = field(.workdayStart, defaults.workdayStart)
         workdayEnd = field(.workdayEnd, defaults.workdayEnd)
         workdays = field(.workdays, defaults.workdays)
@@ -123,10 +126,11 @@ public struct Settings: Codable, Sendable, Equatable {
 
     public func isHidden(_ calendarID: String) -> Bool { hiddenCalendars.contains(calendarID) }
 
-    /// The calendars Claude may see.
+    /// The calendars Claude may see, those it may only read marked not writable.
     public func visible(_ calendars: [CalendarInfo]) -> [CalendarInfo] {
         let hidden = Set(hiddenCalendars)
-        return hidden.isEmpty ? calendars : calendars.filter { !hidden.contains($0.id) }
+        let shown = hidden.isEmpty ? calendars : calendars.filter { !hidden.contains($0.id) }
+        return readOnlyCalendars.isEmpty ? shown : shown.map(applied)
     }
 
     /// The events in calendars Claude may see.
@@ -138,6 +142,38 @@ public struct Settings: Codable, Sendable, Equatable {
     public mutating func setHidden(_ calendarID: String, _ hidden: Bool) {
         hiddenCalendars.removeAll { $0 == calendarID }
         if hidden { hiddenCalendars.append(calendarID) }
+    }
+
+    // MARK: Access per calendar
+
+    /// What Claude may do with one calendar (or reminder list).
+    public enum CalendarAccess: String, CaseIterable, Sendable {
+        /// Read and change.
+        case change
+        /// Read only.
+        case read
+        /// Neither: Claude never sees it.
+        case hidden
+    }
+
+    public func isReadOnly(_ calendarID: String) -> Bool { readOnlyCalendars.contains(calendarID) }
+
+    public func access(_ calendarID: String) -> CalendarAccess {
+        isHidden(calendarID) ? .hidden : isReadOnly(calendarID) ? .read : .change
+    }
+
+    public mutating func setAccess(_ calendarID: String, _ access: CalendarAccess) {
+        setHidden(calendarID, access == .hidden)
+        readOnlyCalendars.removeAll { $0 == calendarID }
+        if access == .read { readOnlyCalendars.append(calendarID) }
+    }
+
+    /// `calendar` as Claude may use it: not writable when the user made it read-only.
+    public func applied(to calendar: CalendarInfo) -> CalendarInfo {
+        guard calendar.writable, isReadOnly(calendar.id) else { return calendar }
+        var copy = calendar
+        copy.writable = false
+        return copy
     }
 }
 

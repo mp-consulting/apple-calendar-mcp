@@ -33,8 +33,30 @@ public struct ChangeRecord: Codable, Sendable, Identifiable, Equatable {
     public var after: Event?
     /// When it was undone; an undone change is never undone twice.
     public var undone: Date?
+    /// The changes one call made together share this id: `undo_change` puts them all back at once.
+    public var group: UUID?
+    /// For a change to a reminder (`before` and `after` are then nil).
+    public var reminderBefore: Reminder?
+    public var reminderAfter: Reminder?
 
-    public init(id: UUID = UUID(), date: Date = Date(), tool: String, kind: Kind, span: Span = .thisEvent, before: Event?, after: Event?) {
+    public init(tool: String, kind: Kind, reminderBefore: Reminder?, reminderAfter: Reminder?, group: UUID? = nil) {
+        self.init(tool: tool, kind: kind, before: nil, after: nil, group: group)
+        self.reminderBefore = reminderBefore
+        self.reminderAfter = reminderAfter
+    }
+
+    /// The reminder the record is about (after the change when there is one).
+    public var reminder: Reminder? { reminderAfter ?? reminderBefore }
+
+    public var isReminder: Bool { reminder != nil }
+
+    /// The title of what it changed.
+    public var title: String { event?.title ?? reminder?.title ?? "" }
+
+    public init(
+        id: UUID = UUID(), date: Date = Date(), tool: String, kind: Kind, span: Span = .thisEvent, before: Event?, after: Event?,
+        group: UUID? = nil
+    ) {
         self.id = id
         self.date = date
         self.tool = tool
@@ -42,6 +64,7 @@ public struct ChangeRecord: Codable, Sendable, Identifiable, Equatable {
         self.span = span
         self.before = before
         self.after = after
+        self.group = group
     }
 
     /// The event the record is about (after the change when there is one).

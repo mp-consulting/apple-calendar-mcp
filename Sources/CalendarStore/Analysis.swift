@@ -151,10 +151,12 @@ public enum VideoLink {
 /// Free-text matching over an event's words, people and places: case and accent insensitive.
 public enum EventText {
     public static func matches(_ event: Event, _ query: String, fields: Set<Field> = Set(Field.allCases)) -> Bool {
-        let terms = query.split(whereSeparator: \.isWhitespace).map(String.init)
-        guard !terms.isEmpty else { return true }
-        let haystack = text(of: event, fields: fields)
-        return terms.allSatisfy { haystack.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
+        matches(text: text(of: event, fields: fields), query)
+    }
+
+    /// Whether every word of `query` is in `text`.
+    public static func matches(text: String, _ query: String) -> Bool {
+        query.split(whereSeparator: \.isWhitespace).allSatisfy { text.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
     }
 
     public enum Field: String, CaseIterable, Sendable {
@@ -243,5 +245,122 @@ public struct TimeStatistics: Sendable {
         }.prefix(top))
         busiestDays = Array(buckets { [DayFormat.string($0.start, calendar: calendar)] }.prefix(5))
         longest = Array(timed.sorted { $0.duration > $1.duration }.prefix(5))
+    }
+}
+
+extension FreeTime {
+    /// The parts of `slots` inside someone else's working hours (`hours`, read in `calendar`'s time zone) that last
+    /// at least `duration`.
+    public static func within(_ slots: [DateInterval], hours: WorkHours, calendar: Calendar, duration: TimeInterval) -> [DateInterval] {
+        var results: [DateInterval] = []
+        for slot in slots {
+            var day = calendar.startOfDay(for: slot.start)
+            while day < slot.end {
+                defer { day = calendar.date(byAdding: .day, value: 1, to: day) ?? slot.end }
+                guard hours.weekdays.contains(calendar.component(.weekday, from: day)), hours.end > hours.start,
+                    let open = calendar.date(byAdding: .minute, value: hours.start, to: day),
+                    let close = calendar.date(byAdding: .minute, value: hours.end, to: day)
+                else { continue }
+                let start = max(open, slot.start)
+                let end = min(close, slot.end)
+                if end.timeIntervalSince(start) >= duration { results.append(DateInterval(start: start, end: end)) }
+            }
+        }
+        return results
+    }
+
+    /// Slots as lines to paste in a message, one per day: "Tue 21 Oct: 14:00–16:00, 16:30–18:00 CEST", with the
+    /// same times in `other`'s zone after each when given ("(21:00–23:00 JST)").
+    public static func text(_ slots: [DateInterval], calendar: Calendar, other: TimeZone? = nil, locale: Locale = .current) -> String {
+        func formatter(_ format: String, _ zone: TimeZone) -> DateFormatter {
+            let formatter = DateFormatter()
+            formatter.locale = locale
+            formatter.timeZone = zone
+            formatter.setLocalizedDateFormatFromTemplate(format)
+            return formatter
+        }
+        let dayFormat = formatter("EEEdMMM", calendar.timeZone)
+        let time = formatter("HHmm", calendar.timeZone)
+        let otherTime = other.map { formatter("HHmm", $0) }
+        func zoneName(_ zone: TimeZone, _ date: Date) -> String { zone.abbreviation(for: date) ?? zone.identifier }
+        var lines: [String] = []
+        var currentDay: Date?
+        var parts: [String] = []
+        func flush() {
+            guard let currentDay, !parts.isEmpty else { return }
+            lines.append("\(dayFormat.string(from: currentDay)): \(parts.joined(separator: ", ")) \(zoneName(calendar.timeZone, currentDay))")
+        }
+        for slot in slots {
+            let day = calendar.startOfDay(for: slot.start)
+            if day != currentDay {
+                flush()
+                currentDay = day
+                parts = []
+            }
+            var part = "\(time.string(from: slot.start))–\(time.string(from: slot.end))"
+            if let other, let otherTime {
+                part += " (\(otherTime.string(from: slot.start))–\(otherTime.string(from: slot.end)) \(zoneName(other, slot.start)))"
+            }
+            parts.append(part)
+        }
+        flush()
+        return lines.joined(separator: "\n")
+    }
+}
+
+/// The same event entered more than once: same title (ignoring case, accents and spacing), start, end and all-day.
+public enum Duplicates {
+    public struct Group: Sendable {
+        /// The copy to keep: one that cannot be deleted when there is one, else the most complete, oldest copy.
+        public var keep: Event
+        public var copies: [Event]
+        /// How many occurrences the group stands for (repeating duplicates are reported once).
+        public var occurrences: Int
+    }
+
+    public static func find(_ events: [Event], deletable: (Event) -> Bool) -> [Group] {
+        func key(_ event: Event) -> String {
+            let title = event.title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+                .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            return "\(title)|\(event.start.timeIntervalSince1970)|\(event.end.timeIntervalSince1970)|\(event.isAllDay)"
+        }
+        var byKey: [String: [Event]] = [:]
+        var order: [String] = []
+        for event in events where event.status != .cancelled {
+            let k = key(event)
+            if byKey[k] == nil { order.append(k) }
+            byKey[k, default: []].append(event)
+        }
+        var groups: [Group] = []
+        var seenSeries: [Set<String>: Int] = [:]
+        for k in order {
+            // One copy per event: occurrences of one series never duplicate each other.
+            var copies: [Event] = []
+            var ids = Set<String>()
+            for event in byKey[k]! where ids.insert(event.eventID).inserted { copies.append(event) }
+            guard copies.count > 1 else { continue }
+            let repeating = copies.allSatisfy(\.isRecurring)
+            if repeating, let index = seenSeries[ids] {
+                groups[index].occurrences += 1
+                continue
+            }
+            let keep = copies.first { !deletable($0) } ?? copies.max { score($0) < score($1) }!
+            groups.append(Group(keep: keep, copies: copies.filter { $0.eventID != keep.eventID }, occurrences: 1))
+            if repeating { seenSeries[ids] = groups.count - 1 }
+        }
+        return groups
+    }
+
+    /// More is better: an invitation with people, then details, then the oldest.
+    static func score(_ event: Event) -> Double {
+        var score = 0.0
+        if !event.attendees.isEmpty { score += 1000 }
+        if event.location != nil { score += 10 }
+        if event.notes?.isEmpty == false { score += 10 }
+        if event.url != nil { score += 10 }
+        score += Double(event.alarms.count)
+        // Older copies first: the newer one is usually the accidental one.
+        if let created = event.created { score -= created.timeIntervalSince1970 / 1e10 }
+        return score
     }
 }
