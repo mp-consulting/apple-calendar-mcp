@@ -77,7 +77,7 @@ func makeToolbox(demo isDemo: Bool, readOnly: Bool, settings: SettingsProvider) 
     let approveAll: Approver = { @Sendable _, _ in .approved }
     let approver: Approver = isDemo ? approveAll : LaunchContext.approver()
     let toolbox = CalendarToolbox(
-        backend: { isDemo ? StandardFixture.backend() : LaunchContext.backend() }, settings: settings,
+        backend: { isDemo ? StandardFixture.backend() : try LaunchContext.backend() }, settings: settings,
         // Benchmarks, demos and scripted runs set this so they don't show up in the menu bar's Activity.
         activity: ProcessInfo.processInfo.environment["APPLE_CALENDAR_MCP_NO_ACTIVITY"] == nil && !isDemo ? ActivityLog() : nil,
         journal: isDemo ? nil : ChangeJournal(),

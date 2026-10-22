@@ -223,6 +223,8 @@ public final class BridgeHost: @unchecked Sendable {
     private var listener: Int32 = -1
     /// Connections turned away because the code at the other end was not ours (shown by `doctor` and the app).
     public private(set) var refusedPeers = 0
+    /// Connections served (a server keeps one open between requests).
+    public private(set) var acceptedConnections = 0
 
     public init(socket: URL, backend: any CalendarBackend, requirement: PeerRequirement, info: BridgeInfo, approver: @escaping Approver) {
         self.socket = socket
@@ -280,6 +282,7 @@ public final class BridgeHost: @unchecked Sendable {
                 close(client)
                 continue
             }
+            lock.withLock { acceptedConnections += 1 }
             Thread.detachNewThread { [weak self] in
                 self?.serve(client)
                 close(client)
@@ -347,6 +350,12 @@ public final class BridgeClient: @unchecked Sendable {
     private let launcher: (@Sendable () throws -> Void)?
     private let lock = NSLock()
     private var launched = false
+    /// A verified connection from an earlier request, kept for the next one (the host serves many per connection).
+    private var idle: LineSocket?
+
+    deinit {
+        if let idle { close(idle.fd) }
+    }
 
     public init(socket: URL, requirement: PeerRequirement, launcher: (@Sendable () throws -> Void)?) {
         self.socket = socket
@@ -354,16 +363,17 @@ public final class BridgeClient: @unchecked Sendable {
         self.launcher = launcher
     }
 
-    /// One request and its answer, on a fresh connection. `timeout` bounds the wait for the answer.
+    /// One request and its answer, on the kept connection when it is still open, else a new one. `timeout` bounds the
+    /// wait for the answer. Concurrent requests each get their own connection.
     func send(_ request: BridgeRequest, timeout: TimeInterval = 30) throws -> BridgeResponse {
-        let fd = try connectOrLaunch()
-        defer { close(fd) }
+        var connection = try takeIdle() ?? LineSocket(fd: try connectOrLaunch())
         var seconds = timeval(tv_sec: Int(timeout.rounded(.up)), tv_usec: 0)
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &seconds, socklen_t(MemoryLayout<timeval>.size))
-        var connection = LineSocket(fd: fd)
+        setsockopt(connection.fd, SOL_SOCKET, SO_RCVTIMEO, &seconds, socklen_t(MemoryLayout<timeval>.size))
         guard connection.write(line: try BridgeCoding.encoder.encode(request)), let line = connection.readLine() else {
+            close(connection.fd)  // a late answer must not reach the next request
             throw CalendarError("The Apple Calendar MCP app stopped answering.")
         }
+        keep(connection)
         let response = try BridgeCoding.decoder.decode(BridgeResponse.self, from: line)
         // Apps before 0.1.4 say only "unreadable request".
         if response.unknownRequest == true || response.error == BridgeHost.unreadable {
@@ -371,6 +381,28 @@ public final class BridgeClient: @unchecked Sendable {
         }
         if let error = response.error { throw CalendarError(error) }
         return response
+    }
+
+    /// The kept connection, unless the app closed it meanwhile (quit or restarted): an idle connection with something
+    /// to read has only its end left.
+    private func takeIdle() throws -> LineSocket? {
+        guard let connection = lock.withLock({ () -> LineSocket? in
+            defer { idle = nil }
+            return idle
+        }) else { return nil }
+        var probe = pollfd(fd: connection.fd, events: Int16(POLLIN), revents: 0)
+        if poll(&probe, 1, 0) == 0 { return connection }
+        close(connection.fd)
+        return nil
+    }
+
+    private func keep(_ connection: LineSocket) {
+        let extra = lock.withLock { () -> LineSocket? in
+            guard idle == nil else { return connection }
+            idle = connection
+            return nil
+        }
+        if let extra { close(extra.fd) }
     }
 
     private func connectOrLaunch() throws -> Int32 {

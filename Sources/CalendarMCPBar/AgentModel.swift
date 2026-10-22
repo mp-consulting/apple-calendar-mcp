@@ -46,7 +46,9 @@ final class AgentModel {
     @ObservationIgnored private var waiting: [UUID: CheckedContinuation<ApprovalDecision, Never>] = [:]
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     @ObservationIgnored private var activityStamp: ActivityLog.Stamp?
-    @ObservationIgnored private var storeObserver: NSObjectProtocol?
+    @ObservationIgnored private var observers: [NSObjectProtocol] = []
+    @ObservationIgnored private var calendarRefresh: Task<Void, Never>?
+    @ObservationIgnored private var calendarGeneration = 0
     var openApprovalWindow: (() -> Void)?
     var closeApprovalWindow: (() -> Void)?
 
@@ -91,21 +93,27 @@ final class AgentModel {
 
     func start() {
         guard tasks.isEmpty else { return }
-        refreshClients()
-        refreshSkills()
         if demo {
+            updater.checkSignature()
+            refreshClients()
             loadDemoActivity()
         } else {
+            // First, so a server that just opened the app finds the socket soon.
+            startBridge()
             requestNotificationPermission()
             updater.automaticChecks = { [weak self] in self?.settings.checkForUpdates ?? true }
             updater.start()
+            refreshClientsInBackground()
             refreshInstalledSkills()
-            startBridge()
-            // Calendar changes (here, in Calendar, synced from elsewhere) refresh the day at once.
-            storeObserver = NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: nil, queue: .main) { [weak self] _ in
+            // Calendar changes (here, in Calendar, synced from elsewhere) refresh the day; a sync sends them in bursts.
+            observers.append(NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshCalendar(after: 0.5) }
+            })
+            observers.append(NotificationCenter.default.addObserver(forName: .NSCalendarDayChanged, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.refreshCalendar() }
-            }
+            })
         }
+        refreshSkills()
         refreshCalendar()
         tasks.append(Task { [weak self] in
             var tick = 0
@@ -113,8 +121,9 @@ final class AgentModel {
                 guard let self else { return }
                 if !self.demo { self.refreshActivity() }
                 if tick % 15 == 0 {
-                    self.refreshCalendar()
-                    self.refreshClients()
+                    // Changes and the day turning are observed; only the permission is polled.
+                    if self.backend.access() != self.access { self.refreshCalendar() }
+                    if !self.demo { self.refreshClientsInBackground() }
                     self.launchAtLogin = SMAppService.mainApp.status == .enabled
                 }
                 tick += 1
@@ -155,21 +164,46 @@ final class AgentModel {
 
     func stopBridge() { host?.stop() }
 
-    func refreshCalendar() {
-        access = backend.access()
-        guard access.canRead else {
-            if !calendars.isEmpty { calendars = [] }
-            if !today.isEmpty { today = [] }
+    /// Reloads calendars and today's events off the main thread (a long query from a server holds EventKit), then
+    /// shows them; `delay` coalesces bursts. The demo reads its memory week right away, for snapshots.
+    func refreshCalendar(after delay: TimeInterval = 0) {
+        if demo {
+            apply(Self.calendarSnapshot(backend, settings, clock()))
             return
         }
-        let all = (try? backend.calendars()) ?? []
-        if all != calendars { calendars = all }
-        let hidden = Set(settings.hiddenCalendars)
-        let start = Calendar.current.startOfDay(for: clock())
+        calendarGeneration += 1
+        let generation = calendarGeneration
+        let (backend, settings, now) = (backend, settings, clock())
+        calendarRefresh?.cancel()
+        calendarRefresh = Task { [weak self] in
+            if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+            guard !Task.isCancelled else { return }
+            let snapshot = await Task.detached { Self.calendarSnapshot(backend, settings, now) }.value
+            guard let self, generation == self.calendarGeneration else { return }
+            self.apply(snapshot)
+        }
+    }
+
+    private struct CalendarSnapshot: Sendable {
+        var access: AccessState
+        var calendars: [CalendarInfo]
+        var today: [Event]
+    }
+
+    private nonisolated static func calendarSnapshot(_ backend: any CalendarBackend, _ settings: Settings, _ now: Date) -> CalendarSnapshot {
+        let access = backend.access()
+        guard access.canRead else { return CalendarSnapshot(access: access, calendars: [], today: []) }
+        let start = Calendar.current.startOfDay(for: now)
         let end = Calendar.current.date(byAdding: .day, value: 1, to: start)!
-        let events = ((try? backend.events(in: start, end)) ?? [])
-            .filter { !hidden.contains($0.calendarID) && $0.isAttended }
-        if events != today { today = events }
+        return CalendarSnapshot(
+            access: access, calendars: (try? backend.calendars()) ?? [],
+            today: settings.visible((try? backend.events(in: start, end)) ?? []).filter(\.isAttended))
+    }
+
+    private func apply(_ snapshot: CalendarSnapshot) {
+        if snapshot.access != access { access = snapshot.access }
+        if snapshot.calendars != calendars { calendars = snapshot.calendars }
+        if snapshot.today != today { today = snapshot.today }
     }
 
     // MARK: Approvals
@@ -264,14 +298,38 @@ final class AgentModel {
 
     // MARK: Claude clients
 
-    func refreshClients() {
+    /// Right away, after the user changed something (the caller reads the new status).
+    func refreshClients() { apply(Self.clientSnapshot(clientInstaller)) }
+
+    /// The periodic look: the Claude config files can be several megabytes, so they are read off the main thread.
+    func refreshClientsInBackground() {
         let installer = clientInstaller
+        Task { [weak self] in
+            let snapshot = await Task.detached { Self.clientSnapshot(installer) }.value
+            self?.apply(snapshot)
+        }
+    }
+
+    private struct ClientSnapshot: Sendable {
+        var status: [ClientInstaller.Client: ClientInstaller.Status]
+        var claudeAppNeedsRestart: Bool
+        var setUpTwice: Bool
+    }
+
+    private nonisolated static func clientSnapshot(_ installer: ClientInstaller) -> ClientSnapshot {
         let status = Dictionary(uniqueKeysWithValues: ClientInstaller.Client.allCases.map { ($0, installer.status($0)) })
-        if status != clientStatus { clientStatus = status }
-        let restart = computeClaudeAppNeedsRestart()
-        if restart != claudeAppNeedsRestart { claudeAppNeedsRestart = restart }
-        let twice = installer.isSetUpTwiceInClaudeDesktop
-        if twice != isSetUpTwiceInClaudeApp { isSetUpTwiceInClaudeApp = twice }
+        // The Claude app reads its config at launch: a newer entry needs a restart.
+        let launched = NSRunningApplication.runningApplications(withBundleIdentifier: claudeAppBundleID).first?.launchDate
+        let restart = launched.flatMap { launched in installer.desktopEntryChanged.map { $0 > launched } } ?? false
+        return ClientSnapshot(
+            status: status, claudeAppNeedsRestart: restart,
+            setUpTwice: installer.isSetUpTwiceInClaudeDesktop(desktopStatus: status[.claudeDesktop] ?? .notInstalled))
+    }
+
+    private func apply(_ snapshot: ClientSnapshot) {
+        if snapshot.status != clientStatus { clientStatus = snapshot.status }
+        if snapshot.claudeAppNeedsRestart != claudeAppNeedsRestart { claudeAppNeedsRestart = snapshot.claudeAppNeedsRestart }
+        if snapshot.setUpTwice != isSetUpTwiceInClaudeApp { isSetUpTwiceInClaudeApp = snapshot.setUpTwice }
     }
 
     func install(in client: ClientInstaller.Client) {
@@ -308,7 +366,6 @@ final class AgentModel {
         if let updated = try? skillInstaller.refreshInstalled(), !updated.isEmpty {
             skillsMessage = "Updated \(plural(updated.count, "Claude skill")) to this version."
         }
-        refreshSkills()
     }
 
     private var chosenSkills: [CalendarSkill] { SkillCatalog.all.filter { selectedSkills.contains($0.name) } }

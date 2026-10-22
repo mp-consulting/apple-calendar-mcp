@@ -30,12 +30,11 @@ extension CalendarToolbox {
             Schema.object([:]), kind: .read
         ) { _ in
             let all = try self.backend.calendars()
-            let hidden = Set(self.settings.current.hiddenCalendars)
-            let visible = all.filter { !hidden.contains($0.id) }
+            let visible = self.settings.current.visible(all)
             return ToolReply(
                 json: .obj([
                     ("calendars", .array(visible.map(Render.calendar))),
-                    ("hidden", hidden.isEmpty ? nil : .int(Int64(all.count - visible.count))),
+                    ("hidden", visible.count == all.count ? nil : .int(Int64(all.count - visible.count))),
                 ]),
                 summary: plural(visible.count, "calendar"))
         }

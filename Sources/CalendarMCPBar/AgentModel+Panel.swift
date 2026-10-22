@@ -51,7 +51,7 @@ struct ApprovalWording {
 }
 
 extension AgentModel {
-    static let claudeAppBundleID = "com.anthropic.claudefordesktop"
+    nonisolated static let claudeAppBundleID = "com.anthropic.claudefordesktop"
 
     // MARK: Header
 
@@ -100,7 +100,7 @@ extension AgentModel {
     /// The panel's footer on the Calendar tab.
     var footerLine: String {
         guard access.canRead else { return "No calendar access yet" }
-        let visible = calendars.count - settings.hiddenCalendars.filter { id in calendars.contains { $0.id == id } }.count
+        let visible = settings.visible(calendars).count
         return "\(plural(visible, "calendar")) · \(Set(calendars.map(\.account)).count) accounts"
     }
 
@@ -208,14 +208,6 @@ extension AgentModel {
     }
 
     /// Our entry changed after the running Claude app read it: it only loads servers at launch.
-    func computeClaudeAppNeedsRestart() -> Bool {
-        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: Self.claudeAppBundleID).first,
-              let launched = app.launchDate,
-              let changed = clientInstaller.desktopEntryChanged
-        else { return false }
-        return changed > launched
-    }
-
     /// Server and every skill in one click.
     func connectClaudeCode() {
         install(in: .claudeCode)

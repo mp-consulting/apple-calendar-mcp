@@ -221,11 +221,11 @@ extension CalendarToolbox {
                 return ToolReply(
                     json: .obj([
                         ("dry_run", .bool(true)), ("event", Render.event(current)), ("would_change", .string(description)),
-                        ("after", Render.event(preview)), ("asks_first", current.hasOtherAttendees && self.settings.current.sharedEventPolicy == .confirm ? .bool(true) : nil),
-                    ]),
+                        ("after", Render.event(preview)),
+                    ] + self.approvalPairs(deleting: false, events: [current])),
                     summary: "dry run: 1 event", event: current)
             }
-            try await self.authorize(tool: "update_event", deleting: false, events: current.hasOtherAttendees ? [current] : [], detail: description)
+            try await self.authorize(tool: "update_event", deleting: false, events: [current], detail: description)
             let updated = try self.backend.update(ref, change, span: span)
             let record = ChangeRecord(tool: "update_event", kind: .updated, span: span, before: current, after: updated)
             self.record([record])
@@ -267,10 +267,8 @@ extension CalendarToolbox {
             }
             if try arguments.bool("dry_run") == true {
                 return ToolReply(
-                    json: .obj([
-                        ("dry_run", .bool(true)), ("would_delete", .array(events.map(Render.event))),
-                        ("asks_first", self.settings.current.deletePolicy == .confirm ? .bool(true) : nil),
-                    ]),
+                    json: .obj([("dry_run", .bool(true)), ("would_delete", .array(events.map(Render.event)))]
+                        + self.approvalPairs(deleting: true, events: events)),
                     summary: "dry run: \(plural(events.count, "event"))")
             }
             try await self.authorize(tool: "delete_event", deleting: true, events: events, detail: span == .futureEvents ? "Repeating events: this and every later occurrence." : nil)
@@ -334,7 +332,8 @@ extension CalendarToolbox {
             ])
             if try arguments.bool("dry_run") == true {
                 return ToolReply(
-                    json: .obj([("dry_run", .bool(true)), ("event", Render.event(current)), ("check", checkJSON)]),
+                    json: .obj([("dry_run", .bool(true)), ("event", Render.event(current)), ("check", checkJSON)]
+                        + self.approvalPairs(deleting: false, events: [current])),
                     summary: "dry run: 1 invitation", event: current)
             }
             guard check.answerable else {

@@ -16,6 +16,18 @@ All notable changes to this project are documented here. The format follows
 - Undoing the creation of an event other people are invited to now asks "Delete a shared event?" instead of "Change".
 - The bridge reads large replies (long searches, statistics, exports) in linear time, and link detection in event
   notes no longer rebuilds its detector for every event.
+- A server started before the app was installed or set up now recovers on the next call instead of needing a
+  restart of the MCP client.
+- Dry runs of `update_event`, `delete_event` and `respond_to_invitation` say exactly what the real call would do
+  about approval (`asks_first`, or `would_refuse` when a policy forbids it).
+
+### Changed
+
+- Servers keep one connection to the app open between requests instead of connecting (and checking signatures)
+  for each one.
+- Subscribed resources are recomputed only when the calendar changed, the day turned, or 15 minutes passed.
+- The menu bar app starts its bridge first, reads calendars and Claude's config files off the main thread, and
+  follows calendar changes and the day turning instead of polling every 30 seconds.
 
 ## [0.1.3] - 2026-10-22
 

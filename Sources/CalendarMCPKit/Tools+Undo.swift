@@ -61,7 +61,7 @@ extension CalendarToolbox {
                     change.recurrence = nil
                     change.removeRecurrence = false
                 }
-                try await self.authorize(tool: "undo_change", deleting: false, events: current.hasOtherAttendees ? [current] : [], detail: Self.describe(current, change.applied(to: current)))
+                try await self.authorize(tool: "undo_change", deleting: false, events: [current], detail: Self.describe(current, change.applied(to: current)))
                 let restored = try self.backend.update(ref, change, span: record.span)
                 reply = ToolReply(json: .obj([("undone", .string("updated")), ("event", Render.detail(restored, notesLimit: 4000))]), summary: "restored 1 event", event: restored)
             case .deleted:

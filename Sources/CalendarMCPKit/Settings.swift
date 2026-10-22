@@ -118,6 +118,27 @@ public struct Settings: Codable, Sendable, Equatable {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(self).write(to: url, options: .atomic)
     }
+
+    // MARK: Hidden calendars
+
+    public func isHidden(_ calendarID: String) -> Bool { hiddenCalendars.contains(calendarID) }
+
+    /// The calendars Claude may see.
+    public func visible(_ calendars: [CalendarInfo]) -> [CalendarInfo] {
+        let hidden = Set(hiddenCalendars)
+        return hidden.isEmpty ? calendars : calendars.filter { !hidden.contains($0.id) }
+    }
+
+    /// The events in calendars Claude may see.
+    public func visible(_ events: [Event]) -> [Event] {
+        let hidden = Set(hiddenCalendars)
+        return hidden.isEmpty ? events : events.filter { !hidden.contains($0.calendarID) }
+    }
+
+    public mutating func setHidden(_ calendarID: String, _ hidden: Bool) {
+        hiddenCalendars.removeAll { $0 == calendarID }
+        if hidden { hiddenCalendars.append(calendarID) }
+    }
 }
 
 /// Settings file plus command-line overrides, reloaded when the file changes.

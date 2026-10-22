@@ -107,8 +107,7 @@ public final class CalendarToolbox: @unchecked Sendable {
 
     /// Calendars Claude may see: all but the hidden ones.
     func visibleCalendars() throws -> [CalendarInfo] {
-        let hidden = Set(settings.current.hiddenCalendars)
-        return try backend.calendars().filter { !hidden.contains($0.id) }
+        settings.current.visible(try backend.calendars())
     }
 
     /// The calendars named in `key` (ids, titles, or "Account/Title"), else nil for "all visible".
@@ -138,13 +137,12 @@ public final class CalendarToolbox: @unchecked Sendable {
     func events(from start: Date, to end: Date, calendarIDs: [String]?) throws -> [Event] {
         guard end > start else { throw ToolError("end must be after start") }
         guard end.timeIntervalSince(start) <= 10 * 366 * 86_400 else { throw ToolError("The period is longer than 10 years; narrow it.") }
-        let hidden = Set(settings.current.hiddenCalendars)
-        return try backend.events(in: start, end, calendarIDs: calendarIDs).filter { !hidden.contains($0.calendarID) }
+        return settings.current.visible(try backend.events(in: start, end, calendarIDs: calendarIDs))
     }
 
     /// The event `ref` names, when its calendar is visible.
     func event(_ ref: EventRef) throws -> Event {
-        guard let event = try backend.event(ref), !settings.current.hiddenCalendars.contains(event.calendarID) else {
+        guard let event = try backend.event(ref), !settings.current.isHidden(event.calendarID) else {
             throw ToolError(CalendarError.notFound(ref).description)
         }
         return event
@@ -166,13 +164,20 @@ public final class CalendarToolbox: @unchecked Sendable {
     }
 
     /// Applies the delete and shared-event policies to `events`; may wait for the user's OK in the menu bar app.
-    func authorize(tool: String, deleting: Bool, events: [Event], detail: String? = nil) async throws {
+    enum Approval: Equatable {
+        case allow
+        case ask
+        case refuse(String)
+    }
+
+    /// What the user's policies say about deleting or changing `events`, without asking anyone.
+    func approval(deleting: Bool, events: [Event]) -> Approval {
         let current = settings.current
         let shared = events.filter(\.hasOtherAttendees)
         var ask = false
         if deleting {
             switch current.deletePolicy {
-            case .never: throw ToolError("Deleting events is turned off (delete policy \"never\"). Nothing was deleted.")
+            case .never: return .refuse("Deleting events is turned off (delete policy \"never\"). Nothing was deleted.")
             case .confirm: ask = true
             case .allow: break
             }
@@ -180,12 +185,32 @@ public final class CalendarToolbox: @unchecked Sendable {
         if !shared.isEmpty {
             switch current.sharedEventPolicy {
             case .never:
-                throw ToolError("Changing events other people are invited to is turned off. Nothing was changed: \(shared.map(\.title).joined(separator: ", ")).")
+                return .refuse("Changing events other people are invited to is turned off. Nothing was changed: \(shared.map(\.title).joined(separator: ", ")).")
             case .confirm: ask = true
             case .allow: break
             }
         }
-        guard ask else { return }
+        return ask ? .ask : .allow
+    }
+
+    /// For a dry run: what the real call would do about approval.
+    func approvalPairs(deleting: Bool, events: [Event]) -> [(String, JSON?)] {
+        switch approval(deleting: deleting, events: events) {
+        case .allow: []
+        case .ask: [("asks_first", .bool(true))]
+        case .refuse(let reason): [("would_refuse", .string(reason))]
+        }
+    }
+
+    /// Applies the policies to `events`, asking the user in the app when they say so; throws when refused or declined.
+    func authorize(tool: String, deleting: Bool, events: [Event], detail: String? = nil) async throws {
+        switch approval(deleting: deleting, events: events) {
+        case .allow: return
+        case .refuse(let reason): throw ToolError(reason)
+        case .ask: break
+        }
+        let current = settings.current
+        let shared = events.filter(\.hasOtherAttendees)
         let people = Array(Set(shared.flatMap { $0.otherPeople.map(\.formatted) })).sorted()
         let title = events.count == 1 ? events[0].title : "\(events.count) events"
         let request = ApprovalRequest(

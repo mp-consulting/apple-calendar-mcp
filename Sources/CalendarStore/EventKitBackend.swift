@@ -152,26 +152,26 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
         try withStore { store in
             guard let event = try Self.find(ref, in: store) else { throw CalendarError.notFound(ref) }
             try Self.requireWritable(event.calendar)
-            if let title = change.title { event.title = title }
-            if let isAllDay = change.isAllDay { event.isAllDay = isAllDay }
-            if let start = change.start {
-                let duration = event.endDate.timeIntervalSince(event.startDate)
-                event.startDate = start
-                if change.end == nil { event.endDate = start.addingTimeInterval(duration) }
+            // The values come from `applied(to:)`, the rule previews use; only the fields the change names are written,
+            // so what the model does not hold (structured locations, other alarm kinds, complex rules) survives.
+            let target = change.applied(to: Self.event(event))
+            if change.title != nil { event.title = target.title }
+            if change.isAllDay != nil { event.isAllDay = target.isAllDay }
+            if change.start != nil || change.end != nil {
+                event.startDate = target.start
+                event.endDate = target.end
             }
-            if let end = change.end { event.endDate = end }
             guard event.endDate >= event.startDate else { throw CalendarError.endBeforeStart }
-            if let zone = change.timeZone { event.timeZone = zone.isEmpty ? nil : TimeZone(identifier: zone) }
-            if let location = change.location {
-                event.location = location.isEmpty ? nil : location
-                event.structuredLocation = location.isEmpty ? nil : EKStructuredLocation(title: location)
+            if change.timeZone != nil { event.timeZone = target.timeZone.flatMap(TimeZone.init(identifier:)) }
+            if change.location != nil {
+                event.location = target.location
+                event.structuredLocation = target.location.map { EKStructuredLocation(title: $0) }
             }
-            if let notes = change.notes { event.notes = notes.isEmpty ? nil : notes }
-            if let url = change.url { event.url = url.isEmpty ? nil : URL(string: url) }
-            if let availability = change.availability { event.availability = Self.ekAvailability(availability) }
-            if let alarms = change.alarms { event.alarms = alarms.isEmpty ? nil : alarms.map(Self.ekAlarm) }
-            if change.removeRecurrence { event.recurrenceRules = nil }
-            if let rule = change.recurrence { event.recurrenceRules = [Self.ekRule(rule)] }
+            if change.notes != nil { event.notes = target.notes }
+            if change.url != nil { event.url = target.url.flatMap(URL.init(string:)) }
+            if change.availability != nil { event.availability = Self.ekAvailability(target.availability) }
+            if change.alarms != nil { event.alarms = target.alarms.isEmpty ? nil : target.alarms.map(Self.ekAlarm) }
+            if change.removeRecurrence || change.recurrence != nil { event.recurrenceRules = target.recurrence.map { [Self.ekRule($0)] } }
             if let id = change.calendarID {
                 guard let calendar = store.calendar(withIdentifier: id) else { throw CalendarError("No calendar with id \(id).") }
                 try Self.requireWritable(calendar)

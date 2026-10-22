@@ -320,6 +320,8 @@ func event(_ id: String, _ title: String, _ start: Date, minutes: Int = 60, cale
         var refused = approval
         refused.title = "no"
         #expect(try client.requestApproval(refused, timeout: 5) == .denied)
+        // One connection carried every request.
+        #expect(host.acceptedConnections == 1)
         // The socket is owner-only.
         let mode = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
         #expect(mode.map { $0 & 0o077 } == 0)

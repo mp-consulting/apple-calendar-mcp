@@ -36,11 +36,11 @@ public enum Doctor {
                     name: "Calendar access", state: access == .granted ? .ok : .failed,
                     detail: access == .granted ? "granted to the app" : EventKitBackend.explain(access)))
                 if access == .granted, let calendars = try? BridgeBackend(client: client).calendars() {
-                    let hidden = Set(settings.hiddenCalendars)
+                    let hidden = calendars.count - settings.visible(calendars).count
                     checks.append(Check(
                         name: "Calendars", state: calendars.isEmpty ? .warning : .ok,
                         detail: "\(calendars.count) in \(Set(calendars.map(\.account)).count) accounts"
-                            + (hidden.isEmpty ? "" : ", \(calendars.filter { hidden.contains($0.id) }.count) hidden from Claude")))
+                            + (hidden == 0 ? "" : ", \(hidden) hidden from Claude")))
                 }
             } else {
                 let installed = LaunchContext.appURL()

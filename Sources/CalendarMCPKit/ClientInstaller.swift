@@ -118,9 +118,9 @@ public struct ClientInstaller: Sendable {
 
     /// The Claude app runs the server twice: through the extension and through its config file. Claude then
     /// lists every tool twice and starts twice the processes.
-    public var isSetUpTwiceInClaudeDesktop: Bool {
+    public func isSetUpTwiceInClaudeDesktop(desktopStatus: Status) -> Bool {
         guard desktopExtension?.enabled == true else { return false }
-        switch status(.claudeDesktop) {
+        switch desktopStatus {
         case .installed, .otherCommand: return true
         case .notInstalled, .clientMissing: return false
         }

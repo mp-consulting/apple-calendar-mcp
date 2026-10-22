@@ -743,7 +743,7 @@ struct SettingsTab: View {
         .padding(.horizontal, 16).padding(.vertical, 4)
         WeekdayPicker(selection: $model.settings.workdays).padding(.horizontal, 16).padding(.bottom, 4)
         SectionDivider()
-        SectionHeader("Calendars Claude can see") { Text("\(model.calendars.count - model.settings.hiddenCalendars.count) of \(model.calendars.count)") }
+        SectionHeader("Calendars Claude can see") { Text("\(model.settings.visible(model.calendars).count) of \(model.calendars.count)") }
         if model.calendars.isEmpty {
             Text("Allow Calendar access to choose.").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.vertical, 4)
         }
@@ -754,11 +754,8 @@ struct SettingsTab: View {
                 Text(calendar.account + (calendar.writable ? "" : " · read-only")).font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Toggle("", isOn: Binding(
-                    get: { !model.settings.hiddenCalendars.contains(calendar.id) },
-                    set: { visible in
-                        if visible { model.settings.hiddenCalendars.removeAll { $0 == calendar.id } }
-                        else if !model.settings.hiddenCalendars.contains(calendar.id) { model.settings.hiddenCalendars.append(calendar.id) }
-                    }))
+                    get: { !model.settings.isHidden(calendar.id) },
+                    set: { model.settings.setHidden(calendar.id, !$0) }))
                     .labelsHidden().toggleStyle(.switch).controlSize(.mini)
             }
             .padding(.horizontal, 16)

@@ -28,8 +28,9 @@ import Security
     }
 
     private(set) var state: State = .idle
-    /// Off for development builds: without the team's signature there is no safe way to replace them.
-    let isEnabled: Bool
+    /// Off for development builds: without the team's signature there is no safe way to replace them. Known once
+    /// `start` (or `checkSignature`) has checked the signature, which hashes the whole bundle.
+    private(set) var isEnabled = false
     let currentVersion: AppVersion?
     /// Whether the user wants daily checks (Settings → Updates).
     var automaticChecks: () -> Bool = { true }
@@ -44,8 +45,10 @@ import Security
 
     init() {
         currentVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String).flatMap(AppVersion.init)
-        isEnabled = Self.satisfies(Bundle.main.bundleURL, Self.appRequirement)
     }
+
+    /// Checks the signature now, on this thread (the demo, whose snapshots show the update controls).
+    func checkSignature() { isEnabled = Self.satisfies(Bundle.main.bundleURL, Self.appRequirement) }
 
     var availableRelease: Release? {
         if case let .available(release) = state { release } else { nil }
@@ -62,8 +65,11 @@ import Security
     /// Checks now if a day has passed, then looks again every hour (a Mac that slept through the
     /// due time catches up within the hour).
     func start() {
-        guard isEnabled, schedule == nil else { return }
+        guard schedule == nil else { return }
         schedule = Task { [weak self] in
+            let signed = await Task.detached { Self.satisfies(Bundle.main.bundleURL, Self.appRequirement) }.value
+            self?.isEnabled = signed
+            guard signed else { return }
             while !Task.isCancelled {
                 if self?.noticeNewerInstall() != true { await self?.checkIfDue() }
                 try? await Task.sleep(nanoseconds: 60 * 60 * 1_000_000_000)

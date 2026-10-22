@@ -274,6 +274,31 @@ func titles(_ list: Any?) -> [String] { (list as? [[String: Any]] ?? []).compact
         let dentist = try #require(try harness.backend.events(in: day(23), day(24)).first { $0.title == "Dentist" })
         #expect(await harness.failure("delete_event", ["ids": [.string(dentist.id)]]).contains("turned off"))
         #expect(try harness.backend.event(dentist.ref) != nil)
+        // The dry run says so too, instead of promising a deletion.
+        let dry = try await harness.call("delete_event", ["ids": [.string(dentist.id)], "dry_run": true])
+        #expect((dry["would_refuse"] as? String)?.contains("turned off") == true)
+        #expect(dry["asks_first"] == nil)
+    }
+
+    @Test func dryRunsReportTheApprovalTheCallWouldNeed() async throws {
+        let harness = try Harness()
+        let review = try #require(try harness.backend.events(in: day(20), day(21)).first { $0.title.hasPrefix("Design review") })
+        let shared = try await harness.call("update_event", ["id": .string(review.id), "title": "Review", "dry_run": true])
+        #expect(shared["asks_first"] as? Bool == true)
+        let dentist = try #require(try harness.backend.events(in: day(23), day(24)).first { $0.title == "Dentist" })
+        let alone = try await harness.call("update_event", ["id": .string(dentist.id), "title": "Dentist (moved)", "dry_run": true])
+        #expect(alone["asks_first"] == nil)
+        #expect(harness.approvals.requests.isEmpty)
+    }
+
+    @Test func changeToolsStopWhenChangesAreOff() async throws {
+        var settings = Settings()
+        settings.allowCalendarChanges = false
+        let harness = try Harness(settings: settings)
+        #expect(await harness.failure("create_event", ["title": "X", "start": "2026-10-23T11:00"]).contains("Allow changes"))
+        #expect(await harness.failure("undo_change", ["change_id": "00000000-0000-0000-0000-000000000000"]).contains("Allow changes"))
+        // Listing what could be undone is still possible.
+        _ = try await harness.call("undo_change")
     }
 
     @Test func undoListAndUndoOfACreate() async throws {

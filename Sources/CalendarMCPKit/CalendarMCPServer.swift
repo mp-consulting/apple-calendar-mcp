@@ -48,7 +48,7 @@ public enum CalendarMCPServer {
         await server.withMethodHandler(ReadResource.self) { params in try await resources.read(params.uri) }
         await server.withMethodHandler(ResourceSubscribe.self) { params in
             try resources.subscribe(params.uri)
-            _ = await resources.changedSubscriptions()  // remember the current state; changes from here on are news
+            await resources.prime(params.uri)  // remember the current state; changes from here on are news
             return Empty()
         }
         await server.withMethodHandler(ResourceUnsubscribe.self) { params in
@@ -133,6 +133,11 @@ final class CalendarResources: @unchecked Sendable {
     let toolbox: CalendarToolbox
     private let lock = NSLock()
     private var subscribed: [String: String] = [:]  // uri -> last content seen
+    private var seenChangeCount: Int?
+    private var lastLook = Date.distantPast
+
+    /// Agendas hold time-based fields (next event, free time left): look again this often even when nothing changed.
+    static let staleAfter: TimeInterval = 15 * 60
 
     init(toolbox: CalendarToolbox) { self.toolbox = toolbox }
 
@@ -171,9 +176,28 @@ final class CalendarResources: @unchecked Sendable {
 
     func unsubscribe(_ uri: String) { _ = lock.withLock { subscribed.removeValue(forKey: uri) } }
 
-    /// The subscribed resources whose content changed since the last look.
+    func prime(_ uri: String) async {
+        guard let text = try? await content(uri) else { return }
+        lock.withLock { if subscribed[uri] != nil { subscribed[uri] = text } }
+    }
+
+    /// The subscribed resources whose content changed since the last look. The agendas are only recomputed when the
+    /// calendar database changed, the day turned, or `staleAfter` passed.
     func changedSubscriptions() async -> [String] {
         let uris = lock.withLock { Array(subscribed.keys) }
+        guard !uris.isEmpty else { return [] }
+        let count = try? toolbox.backend.changeCount()
+        let now = toolbox.now()
+        let due = lock.withLock {
+            let due = count == nil || count != seenChangeCount || !Calendar.current.isDate(lastLook, inSameDayAs: now)
+                || now.timeIntervalSince(lastLook) >= Self.staleAfter
+            if due {
+                seenChangeCount = count
+                lastLook = now
+            }
+            return due
+        }
+        guard due else { return [] }
         var changed: [String] = []
         for uri in uris {
             guard let text = try? await content(uri) else { continue }

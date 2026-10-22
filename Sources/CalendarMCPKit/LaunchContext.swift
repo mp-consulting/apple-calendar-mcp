@@ -7,14 +7,11 @@ import Foundation
 public enum LaunchContext {
     public static let appBundleID = "com.mpconsulting.AppleCalendarMCP"
 
-    /// The backend for a server process.
-    public static func backend(socket: URL = SharedPaths.bridgeSocket) -> any CalendarBackend {
+    /// The backend for a server process. Throws when there is none (an unsigned build cannot use the bridge); the
+    /// toolbox reports that on each call and tries again on the next.
+    public static func backend(socket: URL = SharedPaths.bridgeSocket) throws -> any CalendarBackend {
         if EventKitBackend.authorization() == .granted { return EventKitBackend() }
-        do {
-            return BridgeBackend(client: try bridgeClient(socket: socket))
-        } catch {
-            return UnavailableBackend(reason: String(describing: error))
-        }
+        return BridgeBackend(client: try bridgeClient(socket: socket))
     }
 
     /// A client for the app's bridge that opens the app when it is not running.
@@ -49,22 +46,4 @@ public enum LaunchContext {
         configuration.addsToRecentItems = false
         NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, _ in }
     }
-}
-
-/// A backend that explains, on every call, why there is no calendar.
-public struct UnavailableBackend: CalendarBackend {
-    public let reason: String
-
-    public init(reason: String) { self.reason = reason }
-
-    public func access() -> AccessState { .unavailable(reason) }
-    public func calendars() throws -> [CalendarInfo] { throw CalendarError(reason) }
-    public func events(from start: Date, to end: Date, calendarIDs: [String]?) throws -> [Event] { throw CalendarError(reason) }
-    public func event(_ ref: EventRef) throws -> Event? { throw CalendarError(reason) }
-    public func create(_ draft: EventDraft) throws -> Event { throw CalendarError(reason) }
-    public func update(_ ref: EventRef, _ change: EventChange, span: Span) throws -> Event { throw CalendarError(reason) }
-    public func delete(_ ref: EventRef, span: Span) throws { throw CalendarError(reason) }
-    public func invitationCheck(_ ref: EventRef) throws -> InvitationCheck { throw CalendarError(reason) }
-    public func respond(_ ref: EventRef, _ answer: InvitationAnswer) throws -> Event { throw CalendarError(reason) }
-    public func changeCount() -> Int { 0 }
 }
