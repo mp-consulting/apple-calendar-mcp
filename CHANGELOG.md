@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-22
+
 ### Added
 
 - **What Claude may do, per calendar**: Settings sets each calendar (and reminder list) to *Read and change*,
