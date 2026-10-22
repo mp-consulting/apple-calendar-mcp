@@ -293,6 +293,7 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
         let recurring = event.isRecurring
         return Event(
             eventID: event.eventIdentifier ?? event.calendarItemIdentifier, externalID: event.calendarItemExternalIdentifier,
+            itemID: event.calendarItemIdentifier,
             calendarID: event.calendar?.calendarIdentifier ?? "", calendarTitle: event.calendar?.title ?? "", title: event.title ?? "",
             start: event.startDate, end: event.endDate, isAllDay: event.isAllDay, timeZone: event.timeZone?.identifier,
             location: event.structuredLocation?.title ?? event.location, notes: event.notes, url: event.url?.absoluteString,

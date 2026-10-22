@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Showing one occurrence of a repeating event in Calendar (the menu bar app's Today and Activity, `open_in_calendar`)
+  opened the series' first occurrence. It now opens that occurrence.
+
 ## [0.2.0] - 2026-10-22
 
 ### Added

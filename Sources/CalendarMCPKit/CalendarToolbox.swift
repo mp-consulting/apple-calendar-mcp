@@ -68,8 +68,8 @@ public final class CalendarToolbox: @unchecked Sendable {
     public let readOnly: Bool
     /// The time tools treat as now (tests fix it).
     public var now: @Sendable () -> Date = { Date() }
-    /// Opens a URL (Calendar links); tests record instead.
-    public var open: @Sendable (URL) -> Bool = { _ in false }
+    /// Opens links, in order (Calendar links); tests record instead.
+    public var open: @Sendable ([String]) async -> Bool = { _ in false }
     public var clientName: String? {
         get { lock.withLock { _clientName } }
         set { lock.withLock { _clientName = newValue } }
@@ -273,7 +273,7 @@ public final class CalendarToolbox: @unchecked Sendable {
         var ok = true
         var text: String
         var summary: String
-        var link: String?
+        var links: [String]?
         do {
             var parsed = Arguments(arguments)
             parsed.now = now()
@@ -285,7 +285,7 @@ public final class CalendarToolbox: @unchecked Sendable {
             let reply = try await definition.run(parsed)
             text = (isWrite ? reply.json.adding("server_version", .string(CalendarMCPVersion.build)) : reply.json).serialized()
             summary = reply.summary
-            link = reply.event?.calendarLink
+            links = reply.event?.calendarLinks
         } catch {
             ok = false
             text = "Error: \(error)"
@@ -293,7 +293,7 @@ public final class CalendarToolbox: @unchecked Sendable {
         }
         activity?.append(ActivityEntry(
             id: entryID, date: started, pid: pid, client: clientName, tool: name, ok: ok,
-            milliseconds: Int(Date().timeIntervalSince(started) * 1000), summary: Render.truncate(summary, 160), isWrite: isWrite, link: link))
+            milliseconds: Int(Date().timeIntervalSince(started) * 1000), summary: Render.truncate(summary, 160), isWrite: isWrite, links: links))
         return .init(content: [.text(text: text, annotations: nil, _meta: nil)], isError: ok ? nil : true)
     }
 }

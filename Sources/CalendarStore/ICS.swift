@@ -270,11 +270,12 @@ public enum ICS {
         return parts.joined(separator: ";")
     }
 
-    static func utc(_ date: Date) -> String {
+    /// `20261022T120000Z`; `format` takes year, month, day, hour, minute and second as read in `timeZone`.
+    static func utc(_ date: Date, format: String = "%04d%02d%02dT%02d%02d%02dZ", in timeZone: TimeZone = .gmt) -> String {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC")!
+        calendar.timeZone = timeZone
         let p = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
-        return String(format: "%04d%02d%02dT%02d%02d%02dZ", p.year!, p.month!, p.day!, p.hour!, p.minute!, p.second!)
+        return String(format: format, p.year!, p.month!, p.day!, p.hour!, p.minute!, p.second!)
     }
 
     static func day(_ date: Date, _ calendar: Calendar) -> String { DayFormat.string(date, calendar: calendar).replacingOccurrences(of: "-", with: "") }

@@ -63,6 +63,11 @@ APPLE_CALENDAR_MCP_SUPPORT_DIR=/tmp/acm-demo "…/Apple Calendar MCP.app/Content
 
 - `eventIdentifier` is shared by every occurrence of a repeating event; tools name one occurrence
   `<eventIdentifier>#<unix seconds of its original start>` (`EventRef`), found again through a date query.
+- Calendar's `ical://ekevent/<eventIdentifier>` shows a series' first occurrence. One occurrence is
+  `ical://occurrence/<original start yyyyMMdd'T'HHmmss'Z'>/<calendarItemIdentifier>` (UTC; wall clock for floating
+  events), and Calendar finds it only among the days on screen: open `ical://date/yyyy-MM-dd_HH-mm-ss` (UTC) first,
+  in the same open request, and send the occurrence link again a moment later: Calendar drops it while the new day's
+  events load (`NSWorkspace.showInCalendar(_:)`).
 - `predicateForEvents` answers at most four years per query (`events(in:_:)` chunks).
 - All-day events end at 23:59:59 of their last day; iCalendar ends them at the next midnight.
 - Calendar has no Trash for events: undo recreates a deleted event from the journal, without its attendees.

@@ -424,6 +424,6 @@ final class AgentModel {
     }
 
     func open(_ event: Event) {
-        if let url = URL(string: event.calendarLink) { NSWorkspace.shared.open(url) }
+        Task { await NSWorkspace.shared.showInCalendar(event.calendarLinks) }
     }
 }

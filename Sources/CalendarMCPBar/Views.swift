@@ -401,8 +401,8 @@ struct ActivityRow: View {
             Text(entry.summary).font(.caption).foregroundStyle(entry.ok ? .secondary : .primary).lineLimit(entry.ok ? 1 : 2)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
-            if let link = entry.link, let url = URL(string: link) {
-                Button { NSWorkspace.shared.open(url) } label: { Image(systemName: "arrow.up.forward.app").font(.caption) }
+            if let links = entry.links {
+                Button { Task { await NSWorkspace.shared.showInCalendar(links) } } label: { Image(systemName: "arrow.up.forward.app").font(.caption) }
                     .buttonStyle(.borderless).help("Show in Calendar").accessibilityLabel("Show in Calendar")
             }
             Text(entry.date, format: Calendar.current.isDateInToday(entry.date) ? .dateTime.hour().minute() : .dateTime.day().month(.abbreviated))

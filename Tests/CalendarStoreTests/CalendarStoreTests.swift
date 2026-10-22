@@ -43,6 +43,37 @@ func event(_ id: String, _ title: String, _ start: Date, minutes: Int = 60, cale
     }
 }
 
+@Suite struct CalendarLinkTests {
+    @Test func singleEventsUseTheEventLink() {
+        let single = event("CAL:uid@google.com", "Lunch", at(2026, 10, 22, 13))
+        #expect(single.calendarLinks == ["ical://ekevent/CAL:uid@google.com?method=show&options=more"])
+    }
+
+    @Test func occurrencesOpenTheirDayThenThemselves() {
+        var standup = event("CAL:uid@google.com", "Stand-up", at(2026, 10, 22, 14))
+        standup.itemID = "EA1E7ABA-F2D8-4285-BD08-17C35FC4B252"
+        standup.timeZone = "Europe/Paris"
+        standup.recurrence = Recurrence(frequency: .weekly)
+        standup.occurrenceDate = standup.start
+        let noon = ICS.utc(Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: standup.start)!, format: "%04d-%02d-%02d_%02d-%02d-%02d")
+        #expect(standup.calendarLinks == [
+            "ical://date/\(noon)?method=show",
+            "ical://occurrence/20261022T120000Z/EA1E7ABA-F2D8-4285-BD08-17C35FC4B252?method=show&options=more",
+        ])
+        #expect(standup.calendarLink == standup.calendarLinks[1])
+    }
+
+    @Test func floatingOccurrencesUseTheirWallClockStart() {
+        let midnight = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 22))!
+        var birthday = event("CAL:birthday", "Birthday", midnight)
+        birthday.isAllDay = true
+        birthday.itemID = "ITEM"
+        birthday.recurrence = Recurrence(frequency: .yearly)
+        birthday.occurrenceDate = midnight
+        #expect(birthday.calendarLink == "ical://occurrence/20261022T000000Z/ITEM?method=show&options=more")
+    }
+}
+
 @Suite struct RecurrenceTests {
     let expander = RecurrenceExpander(calendar: paris)
 

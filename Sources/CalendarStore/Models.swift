@@ -156,6 +156,8 @@ public struct Event: Codable, Sendable, Hashable, Identifiable {
     public var eventID: String
     /// The iCalendar UID, the same on every device (nil for some local events).
     public var externalID: String?
+    /// EventKit's `calendarItemIdentifier` (this Mac only), which Calendar's occurrence links name.
+    public var itemID: String?
     public var calendarID: String
     public var calendarTitle: String
     public var title: String
@@ -181,7 +183,7 @@ public struct Event: Codable, Sendable, Hashable, Identifiable {
     public var modified: Date?
 
     public init(
-        eventID: String, externalID: String? = nil, calendarID: String, calendarTitle: String, title: String, start: Date,
+        eventID: String, externalID: String? = nil, itemID: String? = nil, calendarID: String, calendarTitle: String, title: String, start: Date,
         end: Date, isAllDay: Bool = false, timeZone: String? = nil, location: String? = nil, notes: String? = nil,
         url: String? = nil, availability: Availability = .busy, status: EventStatus = .none, organizer: Participant? = nil,
         attendees: [Participant] = [], alarms: [Alarm] = [], recurrence: Recurrence? = nil, isDetached: Bool = false,
@@ -189,6 +191,7 @@ public struct Event: Codable, Sendable, Hashable, Identifiable {
     ) {
         self.eventID = eventID
         self.externalID = externalID
+        self.itemID = itemID
         self.calendarID = calendarID
         self.calendarTitle = calendarTitle
         self.title = title
@@ -393,10 +396,24 @@ public enum Span: String, Codable, Sendable {
 }
 
 extension Event {
-    /// Calendar's own link to the event (`open_in_calendar` and the menu bar app open it).
-    public var calendarLink: String {
-        let id = eventID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? eventID
-        return "ical://ekevent/\(id)?method=show&options=more"
+    /// Calendar's own link to the event, as tools report it. Showing the event takes `calendarLinks`.
+    public var calendarLink: String { calendarLinks.last! }
+
+    /// The links that show the event in Calendar, to open in this order and in one request. `ekevent` shows a
+    /// repeating event's first occurrence, so an occurrence gets Calendar's occurrence link,
+    /// `<original start>/<calendarItemIdentifier>` (the start in UTC, or as written for floating events). Calendar
+    /// finds an occurrence only among the days it shows, so a link to its day comes first: local noon, in UTC.
+    public var calendarLinks: [String] {
+        let pathAllowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
+        guard let occurrence = ref.occurrence, let itemID else {
+            return ["ical://ekevent/\(eventID.addingPercentEncoding(withAllowedCharacters: pathAllowed) ?? eventID)?method=show&options=more"]
+        }
+        let noon = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: occurrence) ?? occurrence
+        let stamp = ICS.utc(occurrence, in: timeZone == nil ? .current : .gmt)
+        return [
+            "ical://date/\(ICS.utc(noon, format: "%04d-%02d-%02d_%02d-%02d-%02d"))?method=show",
+            "ical://occurrence/\(stamp)/\(itemID.addingPercentEncoding(withAllowedCharacters: pathAllowed) ?? itemID)?method=show&options=more",
+        ]
     }
 
     /// "Tue 21 Oct 14:00–15:00 · Design review · Work", for approvals and summaries.

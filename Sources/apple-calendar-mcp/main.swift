@@ -82,7 +82,7 @@ func makeToolbox(demo isDemo: Bool, readOnly: Bool, settings: SettingsProvider) 
         activity: ProcessInfo.processInfo.environment["APPLE_CALENDAR_MCP_NO_ACTIVITY"] == nil && !isDemo ? ActivityLog() : nil,
         journal: isDemo ? nil : ChangeJournal(),
         approver: approver, readOnly: readOnly)
-    toolbox.open = { url in NSWorkspace.shared.open(url) }
+    toolbox.open = { links in await NSWorkspace.shared.showInCalendar(links) }
     return toolbox
 }
 

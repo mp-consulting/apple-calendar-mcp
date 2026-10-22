@@ -12,8 +12,8 @@ public struct ActivityEntry: Codable, Sendable, Hashable, Identifiable {
     /// Short outcome, e.g. "12 events" or "moved 1 event".
     public var summary: String
     public var isWrite: Bool
-    /// Calendar link (`ical://`) of the event the call was about, when there is one.
-    public var link: String?
+    /// Calendar links (`ical://`) that show the event the call was about, when there is one (`Event.calendarLinks`).
+    public var links: [String]?
     /// True on the line written when the call starts; the line written when it finishes has the same `id` and
     /// replaces it. A call that hangs (or a server that died) leaves only this one.
     public var running: Bool?
@@ -22,12 +22,12 @@ public struct ActivityEntry: Codable, Sendable, Hashable, Identifiable {
 
     public init(
         id: UUID = UUID(), date: Date, pid: Int32, client: String?, tool: String, ok: Bool, milliseconds: Int, summary: String,
-        isWrite: Bool, link: String? = nil, running: Bool? = nil, version: String? = CalendarMCPVersion.build
+        isWrite: Bool, links: [String]? = nil, running: Bool? = nil, version: String? = CalendarMCPVersion.build
     ) {
         self.id = id
         self.version = version
         self.running = running
-        self.link = link
+        self.links = links
         self.date = date
         self.pid = pid
         self.client = client

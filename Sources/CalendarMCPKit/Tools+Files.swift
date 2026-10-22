@@ -168,10 +168,10 @@ extension CalendarToolbox {
         ) { arguments in
             if arguments.has("id") {
                 let event = try self.event(arguments.ref("id"))
-                guard let url = URL(string: event.calendarLink), self.open(url) else { throw ToolError("Calendar could not be opened.") }
+                guard await self.open(event.calendarLinks) else { throw ToolError("Calendar could not be opened.") }
                 return ToolReply(json: .obj([("opened", .string(event.title))]), summary: "opened 1 event", event: event)
             }
-            guard self.open(URL(filePath: "/System/Applications/Calendar.app")) else { throw ToolError("Calendar could not be opened.") }
+            guard await self.open(["ical://"]) else { throw ToolError("Calendar could not be opened.") }
             return ToolReply(json: .obj([("opened", .string("Calendar"))]), summary: "opened Calendar")
         }
     }
