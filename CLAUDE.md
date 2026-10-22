@@ -44,7 +44,12 @@ APPLE_CALENDAR_MCP_SUPPORT_DIR=/tmp/acm-demo "…/Apple Calendar MCP.app/Content
   through the app.
 - Approvals travel over the bridge (no files, no Keychain key): deleting and changing events with other attendees
   ask first by default (`deletePolicy`, `sharedEventPolicy`).
-- EventKit cannot invite attendees. Say so in tools and skills; offer `open_in_calendar`.
+- EventKit cannot invite attendees. Say so in tools and skills; offer `open_in_calendar`, or an emailed invitation
+  (`export_events` with `invite`, the `calendar-invite-by-mail` skill).
+- Reminders share the EventKit store but have their own permission, asked only from the app's Settings tab; every
+  reminder tool says so when it is missing. Reminder lists use the same hidden/read-only settings as calendars.
+- Calls that change several items record one `group` in the undo journal; `undo_change` takes the group id and
+  asks once.
 - Answering invitations (`respond_to_invitation`) uses Calendar's undocumented `-[EKEvent setParticipationStatus:]`,
   each call behind `responds(to:)`; when it is missing the tool says so and offers `open_in_calendar`. This is the
   one private API we use, in the app only (the server never touches EventKit's private side).

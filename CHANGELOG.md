@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **What Claude may do, per calendar**: Settings sets each calendar (and reminder list) to *Read and change*,
+  *Read only* or *Hidden*. Nothing is added to, moved into, changed or deleted in a read-only one.
+- **Batches**: `create_events` and `update_events` add or change many events in one call. Every item is checked
+  before anything changes, events other people are invited to are approved together in one request, and one
+  `undo_id` puts the whole call back (`delete_event` returns one too).
+- **Reminders**: `list_reminders`, `create_reminder`, `update_reminder` (including ticking off) and
+  `delete_reminders`, with undo, through the menu bar app once it has Reminders access (Settings tab › Reminders).
+  The agenda lists reminders due.
+- `find_free_time` keeps only times inside someone else's working hours (`other_time_zone`, `other_hours`), and
+  `format: "text"` returns the slots as lines to paste in a message.
+- `find_duplicates`: events entered twice, the copy to keep, and the copies that can go (`delete_ids`).
+- `export_events`: `ids` for exactly those events, `busy_only` to share free/busy without details, and `invite` to
+  write an invitation people can accept or decline; the new `calendar-invite-by-mail` skill attaches it to a draft
+  with Apple Mail MCP.
+- The panel shows **Join** next to a video call that is on or starts within 10 minutes.
+
 ## [0.2.0] - 2026-10-22
 
 ### Added
