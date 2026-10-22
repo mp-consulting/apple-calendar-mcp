@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-22
+
 ### Added
 
 - `respond_to_invitation`: accept, decline or answer "maybe" to an invitation (with `dry_run` to check first).
@@ -94,7 +96,8 @@ The first release.
 - CI on every push and pull request; the release workflow (signed, notarized DMG and Claude extension, MCP
   registry).
 
-[Unreleased]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.0...v0.1.1

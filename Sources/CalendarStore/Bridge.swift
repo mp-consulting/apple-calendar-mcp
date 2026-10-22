@@ -211,7 +211,7 @@ struct LineSocket {
 public final class BridgeHost: @unchecked Sendable {
     public typealias Approver = @Sendable (ApprovalRequest, TimeInterval) async -> ApprovalDecision
 
-    /// The error text for a request the host cannot decode (what apps before 0.1.4 sent alone).
+    /// The error text for a request the host cannot decode (what apps before 0.2.0 sent alone).
     static let unreadable = "unreadable request"
 
     public let socket: URL
@@ -375,7 +375,7 @@ public final class BridgeClient: @unchecked Sendable {
         }
         keep(connection)
         let response = try BridgeCoding.decoder.decode(BridgeResponse.self, from: line)
-        // Apps before 0.1.4 say only "unreadable request".
+        // Apps before 0.2.0 say only "unreadable request".
         if response.unknownRequest == true || response.error == BridgeHost.unreadable {
             throw CalendarError("The Apple Calendar MCP app is older than this server and cannot do this; update the app.")
         }
