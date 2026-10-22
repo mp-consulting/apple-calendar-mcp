@@ -7,7 +7,7 @@ import Foundation
 public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
     private let lock = NSLock()
     private var store: EKEventStore?
-    private var storeAccess: AccessState?
+    private var storeAccess: [AccessState]?
     private var changes = 0
     private var observer: NSObjectProtocol?
 
@@ -17,8 +17,8 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
         if let observer { NotificationCenter.default.removeObserver(observer) }
     }
 
-    public static func authorization() -> AccessState {
-        switch EKEventStore.authorizationStatus(for: .event) {
+    public static func authorization(for entity: EKEntityType = .event) -> AccessState {
+        switch EKEventStore.authorizationStatus(for: entity) {
         case .fullAccess: .granted
         case .writeOnly: .writeOnly
         case .notDetermined: .notDetermined
@@ -42,13 +42,25 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
         return Self.authorization()
     }
 
+    /// Asks macOS for full access to Reminders (the system prompt the first time); the menu bar app only.
+    public func requestReminderAccess() async -> AccessState {
+        let store = lock.withLock { self.store ?? EKEventStore() }
+        _ = try? await store.requestFullAccessToReminders()
+        lock.withLock {
+            self.store = nil
+            storeAccess = nil
+        }
+        return Self.authorization(for: .reminder)
+    }
+
     public func changeCount() -> Int { lock.withLock { changes } }
 
-    /// The store, made again when the permission changed since it was made (EventKit caches what it was allowed).
-    private func withStore<T>(_ body: (EKEventStore) throws -> T) throws -> T {
+    /// The store, made again when a permission changed since it was made (EventKit caches what it was allowed).
+    func withStore<T>(for entity: EKEntityType = .event, _ body: (EKEventStore) throws -> T) throws -> T {
         try lock.withLock {
-            let access = Self.authorization()
-            guard access == .granted else { throw CalendarError(Self.explain(access)) }
+            let access = [Self.authorization(), Self.authorization(for: .reminder)]
+            let needed = entity == .event ? access[0] : access[1]
+            guard needed == .granted else { throw CalendarError(entity == .event ? Self.explain(needed) : Self.explainReminders(needed)) }
             if store == nil || storeAccess != access {
                 let made = EKEventStore()
                 if let observer { NotificationCenter.default.removeObserver(observer) }
@@ -69,6 +81,17 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
         case .denied: "Calendar access is turned off (System Settings › Privacy & Security › Calendars)."
         case .restricted: "Calendar access is restricted on this Mac (Screen Time or a device profile)."
         case .writeOnly: "Calendar access is \"Add Events Only\"; reading needs Full Access (System Settings › Privacy & Security › Calendars)."
+        case .unavailable(let reason): reason
+        }
+    }
+
+    public static func explainReminders(_ access: AccessState) -> String {
+        switch access {
+        case .granted: "Reminders access is granted."
+        case .notDetermined: "Reminders access has not been asked for yet: allow it in the Apple Calendar MCP app (Settings tab)."
+        case .denied: "Reminders access is turned off (System Settings › Privacy & Security › Reminders)."
+        case .restricted: "Reminders access is restricted on this Mac (Screen Time or a device profile)."
+        case .writeOnly: "Reminders access does not allow reading (System Settings › Privacy & Security › Reminders)."
         case .unavailable(let reason): reason
         }
     }
@@ -247,7 +270,7 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
             allowsComment: flag("allowsResponseCommentModifications"), appliesToAll: flag("responseMustApplyToAll"))
     }
 
-    private static func requireWritable(_ calendar: EKCalendar) throws {
+    static func requireWritable(_ calendar: EKCalendar) throws {
         guard calendar.allowsContentModifications else { throw CalendarError.readOnly(calendar.title) }
     }
 

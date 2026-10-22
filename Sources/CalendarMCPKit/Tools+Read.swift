@@ -184,7 +184,8 @@ extension CalendarToolbox {
             "agenda", "Agenda",
             """
             A day (or a few) in one call: the events in order, what is on now and next, conflicts, the free time left \
-            within working hours, invitations still waiting for your answer, and totals. Start here for "what's my day".
+            within working hours, invitations still waiting for your answer, reminders due (with Reminders access), \
+            and totals. Start here for "what's my day".
             """,
             Schema.object([
                 "date": Schema.string("The first day, YYYY-MM-DD or today/tomorrow (default: today)"),
@@ -207,6 +208,9 @@ extension CalendarToolbox {
                 events: events, from: max(first, now), to: end, duration: 15 * 60, hours: settings.workHours, calendar: calendar)
             let conflicts = Conflicts.find(events)
             let pending = all.filter { $0.myStatus == .pending }
+            // Reminders due by the end of the period (overdue ones too), when the user gave Reminders access.
+            let due = (try? self.backend.reminderAccess().canRead) == true
+                ? ((try? self.backend.reminders(ReminderQuery(dueBefore: end))) ?? []).filter { !settings.isHidden($0.listID) } : []
             let meetings = timed.filter(\.hasOtherAttendees)
             let meetingHours = meetings.reduce(0) { $0 + $1.duration } / 3600
             let busyHours = Busy.intervals(timed).reduce(0) { $0 + $1.duration } / 3600
@@ -230,6 +234,7 @@ extension CalendarToolbox {
             pairs.append(("conflicts", conflicts.isEmpty ? nil : JSON.array(conflicts.map(Self.conflict))))
             pairs.append(("free", JSON.array(free.map(Render.slot))))
             pairs.append(("pending_invitations", pending.isEmpty ? nil : JSON.array(pending.map(Render.event))))
+            pairs.append(("reminders_due", due.isEmpty ? nil : JSON.array(due.map { Render.reminder($0, now: now) })))
             return ToolReply(
                 json: .obj(pairs),
                 summary: plural(timed.count, "event") + ", " + (conflicts.isEmpty ? "no conflicts" : plural(conflicts.count, "conflict")))

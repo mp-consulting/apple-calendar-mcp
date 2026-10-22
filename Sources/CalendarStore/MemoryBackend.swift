@@ -20,11 +20,19 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
     private var changes = 0
     private let expander: RecurrenceExpander
     private var state: AccessState = .granted
+    private var listsOfReminders: [CalendarInfo]
+    private var reminderItems: [String: Reminder] = [:]
+    private var reminderState: AccessState = .granted
 
-    public init(calendars: [CalendarInfo], events: [Event] = [], calendar: Calendar = .current) {
+    public init(
+        calendars: [CalendarInfo], events: [Event] = [], reminderLists: [CalendarInfo] = [], reminders: [Reminder] = [],
+        calendar: Calendar = .current
+    ) {
         calendarList = calendars
+        listsOfReminders = reminderLists
         expander = RecurrenceExpander(calendar: calendar)
         for event in events { add(event) }
+        for reminder in reminders { reminderItems[reminder.id] = reminder }
     }
 
     /// Adds `event` as it is (fixtures); its `eventID` is kept.
@@ -39,6 +47,9 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
 
     /// What `access()` reports (tests of missing permission).
     public func setAccess(_ access: AccessState) { lock.withLock { state = access } }
+
+    /// What `reminderAccess()` reports.
+    public func setReminderAccess(_ access: AccessState) { lock.withLock { reminderState = access } }
 
     public func access() -> AccessState { lock.withLock { state } }
 
@@ -208,6 +219,85 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
             changes += 1
             return try occurrence(ref)
         }
+    }
+
+    // MARK: Reminders
+
+    public func reminderAccess() -> AccessState { lock.withLock { reminderState } }
+
+    public func reminderLists() throws -> [CalendarInfo] {
+        try lock.withLock {
+            try checkReminderAccess()
+            return listsOfReminders
+        }
+    }
+
+    public func reminders(_ query: ReminderQuery) throws -> [Reminder] {
+        try lock.withLock {
+            try checkReminderAccess()
+            return reminderItems.values.filter(query.matches).sorted(by: Reminder.byDue)
+        }
+    }
+
+    public func reminder(_ id: String) throws -> Reminder? {
+        try lock.withLock {
+            try checkReminderAccess()
+            return reminderItems[id]
+        }
+    }
+
+    public func createReminder(_ draft: ReminderDraft) throws -> Reminder {
+        try lock.withLock {
+            try checkReminderAccess()
+            let list = try writableList(draft.listID)
+            let id = "REM-\(nextID)"
+            nextID += 1
+            let now = Date()
+            let reminder = Reminder(
+                id: id, listID: list.id, listTitle: list.title, title: draft.title, notes: draft.notes, url: draft.url, due: draft.due,
+                dueHasTime: draft.due != nil && draft.dueHasTime, priority: draft.priority, recurrence: draft.recurrence, created: now, modified: now)
+            reminderItems[id] = reminder
+            changes += 1
+            return reminder
+        }
+    }
+
+    public func updateReminder(_ id: String, _ change: ReminderChange) throws -> Reminder {
+        try lock.withLock {
+            try checkReminderAccess()
+            guard let current = reminderItems[id] else { throw CalendarError.reminderNotFound(id) }
+            _ = try writableList(current.listID)
+            var updated = change.applied(to: current)
+            if let listID = change.listID {
+                let list = try writableList(listID)
+                updated.listTitle = list.title
+            }
+            updated.modified = Date()
+            reminderItems[id] = updated
+            changes += 1
+            return updated
+        }
+    }
+
+    public func deleteReminder(_ id: String) throws {
+        try lock.withLock {
+            try checkReminderAccess()
+            guard let current = reminderItems[id] else { throw CalendarError.reminderNotFound(id) }
+            _ = try writableList(current.listID)
+            reminderItems[id] = nil
+            changes += 1
+        }
+    }
+
+    private func checkReminderAccess() throws {
+        guard reminderState == .granted else { throw CalendarError("No access to Reminders (\(reminderState)).") }
+    }
+
+    private func writableList(_ id: String?) throws -> CalendarInfo {
+        let list = id.map { id in listsOfReminders.first { $0.id == id } } ?? listsOfReminders.defaultWritable
+        guard let list else { throw CalendarError("No reminder list with id \(id ?? "(default)").") }
+        guard list.writable else { throw CalendarError.readOnly(list.title) }
+        return list
     }
 
     private func newID() -> String {

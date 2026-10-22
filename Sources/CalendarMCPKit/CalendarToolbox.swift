@@ -100,6 +100,8 @@ public final class CalendarToolbox: @unchecked Sendable {
         create_event and update_event change the calendar right away (use dry_run to preview); deleting, and \
         changing events other people are invited to, may wait for the user's OK in the menu bar app. \
         respond_to_invitation accepts or declines an invitation, and Calendar sends the answer to the organizer. \
+        create_events and update_events change several events at once, with one approval and one undo_id. \
+        Reminders (list_reminders, create_reminder, update_reminder) need Reminders access in the app. \
         EventKit cannot invite people: say so and offer open_in_calendar.
         """
 
@@ -120,7 +122,7 @@ public final class CalendarToolbox: @unchecked Sendable {
     }
 
     /// One calendar by id, title, or "Account/Title" (titles repeat across accounts).
-    func resolveCalendar(_ name: String, in visible: [CalendarInfo]? = nil) throws -> CalendarInfo {
+    func resolveCalendar(_ name: String, in visible: [CalendarInfo]? = nil, noun: String = "calendar") throws -> CalendarInfo {
         let calendars = try visible ?? visibleCalendars()
         if let exact = calendars.first(where: { $0.id == name }) { return exact }
         let matches = calendars.filter {
@@ -129,8 +131,8 @@ public final class CalendarToolbox: @unchecked Sendable {
         }
         if matches.count == 1 { return matches[0] }
         let list = calendars.map { "\($0.account)/\($0.title)" }.joined(separator: ", ")
-        if matches.isEmpty { throw ToolError("No calendar \"\(name)\". Calendars: \(list).") }
-        throw ToolError("Several calendars are called \"\(name)\": \(matches.map { "\($0.account)/\($0.title)" }.joined(separator: ", ")). Name one as Account/Title.")
+        if matches.isEmpty { throw ToolError("No \(noun) \"\(name)\". The \(noun)s: \(list).") }
+        throw ToolError("Several \(noun)s are called \"\(name)\": \(matches.map { "\($0.account)/\($0.title)" }.joined(separator: ", ")). Name one as Account/Title.")
     }
 
     /// Events in a period from the visible calendars.
@@ -223,15 +225,22 @@ public final class CalendarToolbox: @unchecked Sendable {
         case .refuse(let reason): throw ToolError(reason)
         case .ask: break
         }
-        let current = settings.current
         let shared = events.filter(\.hasOtherAttendees)
         let people = Array(Set(shared.flatMap { $0.otherPeople.map(\.formatted) })).sorted()
         let title = events.count == 1 ? events[0].title : "\(events.count) events"
-        let request = ApprovalRequest(
+        try await ask(ApprovalRequest(
             tool: tool, client: clientName, kind: deleting ? .delete : .notify, title: title,
-            items: events.prefix(30).map(\.summaryLine) + (events.count > 30 ? ["… and \(events.count - 30) more"] : []),
-            attendees: Array(people.prefix(40)), detail: detail)
-        let timeout = current.approvalTimeout
+            items: Self.lines(events.map(\.summaryLine)), attendees: Array(people.prefix(40)), detail: detail))
+    }
+
+    /// At most 30 lines for an approval.
+    static func lines(_ all: [String]) -> [String] {
+        Array(all.prefix(30)) + (all.count > 30 ? ["… and \(all.count - 30) more"] : [])
+    }
+
+    /// Asks the user in the app; throws unless they approve.
+    func ask(_ request: ApprovalRequest) async throws {
+        let timeout = settings.current.approvalTimeout
         let decision: ApprovalDecision
         do {
             decision = try await Task.detached { try self.approver(request, timeout) }.value
@@ -250,13 +259,19 @@ public final class CalendarToolbox: @unchecked Sendable {
     /// The id `undo_change` takes for `record` (nil when undo is off).
     func undoID(_ record: ChangeRecord) -> JSON? { journal == nil ? nil : .string(record.id.uuidString) }
 
+    /// One id for everything a call changed: the record's own when there is one, else the group's.
+    func undoID(_ records: [ChangeRecord], group: UUID) -> JSON? {
+        guard journal != nil, !records.isEmpty else { return nil }
+        return .string(records.count == 1 ? records[0].id.uuidString : group.uuidString)
+    }
+
     func undoIDs(_ records: [ChangeRecord]) -> JSON? {
         records.isEmpty || journal == nil ? nil : .array(records.map { .string($0.id.uuidString) })
     }
 
     // MARK: Tool list
 
-    public var definitions: [ToolDefinition] { readTools + changeTools + fileTools + undoTools }
+    public var definitions: [ToolDefinition] { readTools + changeTools + batchTools + reminderTools + fileTools + undoTools }
 
     /// Tools offered to clients (no changing tools in read-only launches). Built once.
     public var listedDefinitions: [ToolDefinition] { listed.all }
