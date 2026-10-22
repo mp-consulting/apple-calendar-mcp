@@ -13,30 +13,15 @@ extension CalendarToolbox {
         settings.current.visible(try backend.reminderLists())
     }
 
-    /// The lists named in `lists`, else nil for "all visible".
-    func listIDs(_ arguments: Arguments) throws -> [String]? {
-        let names = try arguments.strings("lists")
-        if names.isEmpty && settings.current.hiddenCalendars.isEmpty { return nil }
-        let visible = try visibleLists()
-        guard !names.isEmpty else { return visible.map(\.id) }
-        return try names.map { try resolveCalendar($0, in: visible, noun: "reminder list").id }
+    /// A list the user lets Claude change, by name; the default one when none is named.
+    func targetList(_ arguments: Arguments, in lists: [CalendarInfo]? = nil) throws -> CalendarInfo {
+        try target(arguments, key: "list", in: lists ?? visibleLists(), noun: "reminder list")
     }
 
-    /// A list the user lets Claude change, by name; the default one when none is named.
-    func targetList(_ arguments: Arguments) throws -> CalendarInfo {
-        let visible = try visibleLists()
-        let list: CalendarInfo
-        if let name = try arguments.string("list") {
-            list = try resolveCalendar(name, in: visible, noun: "reminder list")
-        } else {
-            guard let preferred = visible.defaultWritable else { throw ToolError("No reminder list can take new reminders; pass list.") }
-            list = preferred
-        }
-        guard list.writable else {
-            let why = settings.current.isReadOnly(list.id) ? "Claude may only read it (Apple Calendar MCP settings)" : "it is read-only"
-            throw ToolError("\"\(list.title)\": \(why); pick another list.")
-        }
-        return list
+    /// Reminders matching `query`, those in hidden lists left out.
+    func visibleReminders(_ query: ReminderQuery) throws -> [Reminder] {
+        let current = settings.current
+        return try backend.reminders(query).filter { !current.isHidden($0.listID) }
     }
 
     /// The reminder `id` names, when its list is visible.
@@ -47,16 +32,8 @@ extension CalendarToolbox {
         return reminder
     }
 
-    func requireWritable(_ reminders: [Reminder], nothing: String = "Nothing was changed.") throws {
-        let lists = try backend.reminderLists()
-        for reminder in reminders {
-            if settings.current.isReadOnly(reminder.listID) {
-                throw ToolError("\"\(reminder.title)\" is in \(reminder.listTitle), which Claude may only read (Apple Calendar MCP settings). \(nothing)")
-            }
-            if lists.first(where: { $0.id == reminder.listID })?.writable == false {
-                throw ToolError("\"\(reminder.title)\" is in a read-only list (\(reminder.listTitle)). \(nothing)")
-            }
-        }
+    func requireWritable(_ reminders: [Reminder], in lists: [CalendarInfo]? = nil, nothing: String = "Nothing was changed.") throws {
+        try requireWritable(reminders.map { ($0.title, $0.listID, $0.listTitle) }, in: lists ?? visibleLists(), nothing: nothing)
     }
 
     /// `due` as a date, and whether it has a time (a day alone is due that day).
@@ -95,28 +72,23 @@ extension CalendarToolbox {
             guard let status = ReminderQuery.Status(rawValue: try arguments.string("status")?.lowercased() ?? "open") else {
                 throw ToolError("status must be open, completed or all")
             }
+            let lists = try self.visibleLists()
             let query = ReminderQuery(
-                listIDs: try self.listIDs(arguments), status: status, dueAfter: try arguments.date("due_after"),
+                listIDs: try self.containerIDs(arguments, key: "lists", noun: "reminder list", visible: { lists }), status: status,
+                dueAfter: try arguments.date("due_after"),
                 dueBefore: try arguments.date("due_before", endOfDay: arguments.isDay("due_before")).map { $0.addingTimeInterval(1) },
                 completedAfter: try arguments.date("completed_since") ?? self.startOfToday.addingTimeInterval(-30 * 86_400))
-            var reminders = try self.backend.reminders(query).filter { !self.settings.current.isHidden($0.listID) }
+            var reminders = try self.visibleReminders(query)
             if let words = try arguments.string("query") {
-                let terms = words.split(whereSeparator: \.isWhitespace)
-                reminders = reminders.filter { reminder in
-                    let text = reminder.title + "\n" + (reminder.notes ?? "")
-                    return terms.allSatisfy { text.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
-                }
+                reminders = reminders.filter { EventText.matches(text: $0.title + "\n" + ($0.notes ?? ""), words) }
             }
             let limit = try arguments.int("limit", default: 100, in: 1...1000)
-            let lists = try self.visibleLists()
+            let now = self.now()
             return ToolReply(
                 json: .obj([
-                    ("lists", .array(lists.map { list in
-                        .obj([("id", .string(list.id)), ("title", .string(list.title)), ("account", .string(list.account)),
-                              ("read_only", list.writable ? nil : .bool(true)), ("default", list.isDefault ? .bool(true) : nil)])
-                    })),
+                    ("lists", .array(lists.map(Render.calendar))),
                     ("count", .int(Int64(reminders.count))),
-                    ("reminders", .array(reminders.prefix(limit).map { Render.reminder($0, now: self.now()) })),
+                    ("reminders", .array(reminders.prefix(limit).map { Render.reminder($0, now: now) })),
                     ("truncated", reminders.count > limit ? .bool(true) : nil),
                 ]),
                 summary: plural(reminders.count, "reminder"))
@@ -189,20 +161,24 @@ extension CalendarToolbox {
             ], required: ["id"]), kind: .change, idempotent: true
         ) { arguments in
             let current = try self.reminder(try arguments.requiredString("id"))
-            try self.requireWritable([current])
+            let lists = try self.visibleLists()
+            try self.requireWritable([current], in: lists)
             let clearsDue = (try arguments.clearableString("due")) == ""
             let due = clearsDue ? nil : try self.due(arguments)
             var change = ReminderChange(
                 title: try arguments.string("title"), notes: try arguments.clearableString("notes"), url: try arguments.clearableString("url"),
                 due: due?.date, dueHasTime: due?.hasTime, removeDue: clearsDue, priority: try self.priority(arguments),
                 completed: try arguments.bool("completed"))
+            var preview = current
             if arguments.has("list") {
-                let target = try self.targetList(arguments)
-                if target.id != current.listID { change.listID = target.id }
+                let target = try self.targetList(arguments, in: lists)
+                if target.id != current.listID {
+                    change.listID = target.id
+                    preview.listTitle = target.title
+                }
             }
             guard !change.isEmpty else { throw ToolError("Nothing to change: pass at least one field (title, due, completed, …)") }
-            var preview = change.applied(to: current, now: self.now())
-            if let listID = change.listID, let list = try self.visibleLists().first(where: { $0.id == listID }) { preview.listTitle = list.title }
+            preview = change.applied(to: preview, now: self.now())
             if try arguments.bool("dry_run") == true {
                 return ToolReply(
                     json: .obj([("dry_run", .bool(true)), ("reminder", Render.reminder(current, now: self.now())), ("after", Render.reminder(preview, now: self.now()))]),
@@ -237,90 +213,21 @@ extension CalendarToolbox {
             try self.checkBatch(ids.count)
             let reminders = try ids.map(self.reminder)
             try self.requireWritable(reminders, nothing: "Nothing was deleted.")
-            let approval = self.approval(deleting: true, events: [])
+            let now = self.now()
             if try arguments.bool("dry_run") == true {
-                let pairs: [(String, JSON?)] = switch approval {
-                case .allow: []
-                case .ask: [("asks_first", .bool(true))]
-                case .refuse: [("would_refuse", .string(Self.remindersRefused))]
-                }
                 return ToolReply(
-                    json: .obj([("dry_run", .bool(true)), ("would_delete", .array(reminders.map { Render.reminder($0, now: self.now()) }))] + pairs),
+                    json: .obj([("dry_run", .bool(true)), ("would_delete", .array(reminders.map { Render.reminder($0, now: now) }))]
+                        + self.approvalPairs(deleting: true, events: [])),
                     summary: "dry run: \(plural(reminders.count, "reminder"))")
             }
-            try await self.authorizeDeleting(reminders, tool: "delete_reminders")
-            let group = UUID()
-            var deleted: [Reminder] = []
-            var records: [ChangeRecord] = []
-            var failures: [JSON] = []
-            for reminder in reminders {
-                try Task.checkCancellation()
-                do {
-                    try self.backend.deleteReminder(reminder.id)
-                    deleted.append(reminder)
-                    records.append(ChangeRecord(tool: "delete_reminders", kind: .deleted, reminderBefore: reminder, reminderAfter: nil, group: group))
-                } catch {
-                    failures.append(.obj([("id", .string(reminder.id)), ("error", .string(String(describing: error)))]))
-                }
+            try await self.authorize(tool: "delete_reminders", deleting: reminders)
+            let applied = try self.applyEach(reminders, label: { [("id", .string($0.id)), ("title", .string($0.title))] }) { reminder, group in
+                try self.backend.deleteReminder(reminder.id)
+                return (reminder, ChangeRecord(tool: "delete_reminders", kind: .deleted, reminderBefore: reminder, reminderAfter: nil, group: group))
             }
-            self.record(records)
             return ToolReply(
-                json: .obj([
-                    ("deleted", .array(deleted.map { Render.reminder($0, now: self.now()) })), ("failed", failures.isEmpty ? nil : .array(failures)),
-                    ("undo_id", self.undoID(records, group: group)),
-                ]),
-                summary: "deleted \(plural(deleted.count, "reminder"))\(failures.isEmpty ? "" : ", \(failures.count) failed")")
-        }
-    }
-
-    static let remindersRefused = "Deleting is turned off (delete policy \"never\"). Nothing was deleted."
-
-    /// The delete policy, for reminders: asks in the app unless it allows or refuses.
-    func authorizeDeleting(_ reminders: [Reminder], tool: String) async throws {
-        switch approval(deleting: true, events: []) {
-        case .allow: return
-        case .refuse: throw ToolError(Self.remindersRefused)
-        case .ask: break
-        }
-        try await ask(ApprovalRequest(
-            tool: tool, client: clientName, kind: .delete, title: reminders.count == 1 ? reminders[0].title : "\(reminders.count) reminders",
-            items: Self.lines(reminders.map(\.summaryLine)), subject: "reminder"))
-    }
-
-    // MARK: Undo
-
-    /// Puts one reminder change back.
-    func undoReminder(_ record: ChangeRecord, journal: ChangeJournal) async throws -> ToolReply {
-        switch record.kind {
-        case .created:
-            guard let made = record.reminderAfter else { throw ToolError("The journal entry is incomplete.") }
-            guard let current = try backend.reminder(made.id) else {
-                return ToolReply(json: .obj([("undone", .string("created")), ("note", .string("The reminder was already gone."))]), summary: "already gone")
-            }
-            try requireWritable([current])
-            if current.title != made.title || current.due != made.due { try await authorizeDeleting([current], tool: "undo_change") }
-            try backend.deleteReminder(current.id)
-            return ToolReply(json: .obj([("undone", .string("created")), ("deleted", Render.reminder(current, now: now()))]), summary: "deleted the reminder it created")
-        case .updated:
-            guard let before = record.reminderBefore, let after = record.reminderAfter else { throw ToolError("The journal entry is incomplete.") }
-            let current = try reminder(after.id)
-            try requireWritable([current])
-            var change = ReminderChange(restoring: before)
-            if before.listID == current.listID { change.listID = nil }
-            if let target = change.listID, settings.current.isReadOnly(target) {
-                throw ToolError("\"\(before.title)\" came from \(before.listTitle), which Claude may now only read. Nothing was changed.")
-            }
-            let restored = try backend.updateReminder(current.id, change)
-            return ToolReply(json: .obj([("undone", .string("updated")), ("reminder", Render.reminder(restored, now: now()))]), summary: "restored 1 reminder")
-        case .deleted:
-            guard let before = record.reminderBefore else { throw ToolError("The journal entry is incomplete.") }
-            var draft = ReminderDraft(copying: before)
-            let lists = try visibleLists()
-            if lists.first(where: { $0.id == before.listID })?.writable != true { draft.listID = lists.defaultWritable?.id }
-            let created = try backend.createReminder(draft)
-            if before.isCompleted { _ = try? backend.updateReminder(created.id, ReminderChange(completed: true)) }
-            journal.append([ChangeRecord(tool: "undo_change", kind: .created, reminderBefore: nil, reminderAfter: created)])
-            return ToolReply(json: .obj([("undone", .string("deleted")), ("created", Render.reminder(created, now: now()))]), summary: "brought back 1 reminder")
+                json: .obj([("deleted", .array(applied.done.map { Render.reminder($0, now: now) }))] + self.outcome(applied)),
+                summary: Self.summary("deleted", "reminder", applied))
         }
     }
 }

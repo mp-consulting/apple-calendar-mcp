@@ -25,14 +25,10 @@ extension EventKitBackend {
             var predicates: [NSPredicate] = []
             if query.status != .completed {
                 // Without a window this also returns open reminders that have no due date.
-                let windowed = query.dueAfter != nil || query.dueBefore != nil
-                predicates.append(windowed
-                    ? store.predicateForIncompleteReminders(withDueDateStarting: query.dueAfter, ending: query.dueBefore, calendars: lists)
-                    : store.predicateForIncompleteReminders(withDueDateStarting: nil, ending: nil, calendars: lists))
+                predicates.append(store.predicateForIncompleteReminders(withDueDateStarting: query.dueAfter, ending: query.dueBefore, calendars: lists))
             }
             if query.status != .open {
-                predicates.append(store.predicateForCompletedReminders(
-                    withCompletionDateStarting: query.completedAfter, ending: query.completedBefore, calendars: lists))
+                predicates.append(store.predicateForCompletedReminders(withCompletionDateStarting: query.completedAfter, ending: nil, calendars: lists))
             }
             var results: [Reminder] = []
             for predicate in predicates { results += Self.fetch(predicate, in: store).map(Self.reminder) }
@@ -133,7 +129,7 @@ extension EventKitBackend {
             reminder.startDateComponents = nil
             return
         }
-        var calendar = Calendar(identifier: .gregorian)
+        var calendar = gregorian
         calendar.timeZone = .current
         var parts = calendar.dateComponents(hasTime ? [.year, .month, .day, .hour, .minute] : [.year, .month, .day], from: due)
         if hasTime { parts.timeZone = .current }
@@ -141,10 +137,12 @@ extension EventKitBackend {
         if hasTime { reminder.addAlarm(EKAlarm(absoluteDate: due)) }
     }
 
+    private static let gregorian = Calendar(identifier: .gregorian)
+
     static func reminder(_ reminder: EKReminder) -> Reminder {
         let parts = reminder.dueDateComponents
         let hasTime = parts?.hour != nil
-        var calendar = Calendar(identifier: .gregorian)
+        var calendar = gregorian
         calendar.timeZone = parts?.timeZone ?? .current
         let due = parts.flatMap { components -> Date? in
             var day = components

@@ -7,7 +7,8 @@ import Foundation
 public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
     private let lock = NSLock()
     private var store: EKEventStore?
-    private var storeAccess: [AccessState]?
+    /// What each kind (`EKEntityType.rawValue`) was allowed when the store was made.
+    private var storeAccess: [UInt: AccessState] = [:]
     private var changes = 0
     private var observer: NSObjectProtocol?
 
@@ -30,45 +31,35 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
 
     public func access() -> AccessState { Self.authorization() }
 
-    /// Asks macOS for full access (shows the system prompt the first time). Only for an app bundle with
-    /// `NSCalendarsFullAccessUsageDescription`: the menu bar app.
-    public func requestAccess() async -> AccessState {
+    /// Asks macOS for full access to events or reminders (shows the system prompt the first time). Only for an app
+    /// bundle with the matching usage descriptions: the menu bar app.
+    public func requestAccess(to entity: EKEntityType = .event) async -> AccessState {
         let store = lock.withLock { self.store ?? EKEventStore() }
-        _ = try? await store.requestFullAccessToEvents()
-        lock.withLock {
-            self.store = nil  // made again with the new permission
-            storeAccess = nil
+        if entity == .event {
+            _ = try? await store.requestFullAccessToEvents()
+        } else {
+            _ = try? await store.requestFullAccessToReminders()
         }
-        return Self.authorization()
-    }
-
-    /// Asks macOS for full access to Reminders (the system prompt the first time); the menu bar app only.
-    public func requestReminderAccess() async -> AccessState {
-        let store = lock.withLock { self.store ?? EKEventStore() }
-        _ = try? await store.requestFullAccessToReminders()
-        lock.withLock {
-            self.store = nil
-            storeAccess = nil
-        }
-        return Self.authorization(for: .reminder)
+        lock.withLock { self.store = nil }  // made again with the new permission
+        return Self.authorization(for: entity)
     }
 
     public func changeCount() -> Int { lock.withLock { changes } }
 
-    /// The store, made again when a permission changed since it was made (EventKit caches what it was allowed).
+    /// The store, made again when the permission this call needs changed since it was made (EventKit caches what it
+    /// was allowed).
     func withStore<T>(for entity: EKEntityType = .event, _ body: (EKEventStore) throws -> T) throws -> T {
         try lock.withLock {
-            let access = [Self.authorization(), Self.authorization(for: .reminder)]
-            let needed = entity == .event ? access[0] : access[1]
+            let needed = Self.authorization(for: entity)
             guard needed == .granted else { throw CalendarError(entity == .event ? Self.explain(needed) : Self.explainReminders(needed)) }
-            if store == nil || storeAccess != access {
+            if store == nil || storeAccess[entity.rawValue] != needed {
                 let made = EKEventStore()
                 if let observer { NotificationCenter.default.removeObserver(observer) }
                 observer = NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: made, queue: nil) { [weak self] _ in
                     self?.lock.withLock { self?.changes += 1 }
                 }
                 store = made
-                storeAccess = access
+                storeAccess = [EKEntityType.event.rawValue: Self.authorization(), EKEntityType.reminder.rawValue: Self.authorization(for: .reminder)]
             }
             return try body(store!)
         }

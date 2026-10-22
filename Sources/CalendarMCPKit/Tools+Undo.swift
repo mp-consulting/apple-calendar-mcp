@@ -59,101 +59,70 @@ extension CalendarToolbox {
 
     /// One change to put back, checked, before anything is done.
     fileprivate enum UndoStep {
-        /// Delete an event it created (`ask`: it changed since, or others are invited).
-        case deleteCreated(ChangeRecord, current: Event, ask: Bool)
+        /// Delete what it created (`ask`: it changed since, or others are invited).
+        case deleteEvent(ChangeRecord, target: EventRef, span: Span, current: Event, ask: Bool)
+        case deleteReminder(ChangeRecord, current: Reminder, ask: Bool)
         case alreadyGone(ChangeRecord)
-        case restore(ChangeRecord, current: Event, change: EventChange)
-        case recreate(ChangeRecord, draft: EventDraft)
-        case reminder(ChangeRecord)
+        case restoreEvent(ChangeRecord, current: Event, change: EventChange)
+        case restoreReminder(ChangeRecord, current: Reminder, change: ReminderChange)
+        case recreateEvent(ChangeRecord, before: Event, draft: EventDraft)
+        case recreateReminder(ChangeRecord, before: Reminder, draft: ReminderDraft)
+
+        var record: ChangeRecord {
+            switch self {
+            case .deleteEvent(let record, _, _, _, _), .deleteReminder(let record, _, _), .alreadyGone(let record), .restoreEvent(let record, _, _),
+                .restoreReminder(let record, _, _), .recreateEvent(let record, _, _), .recreateReminder(let record, _, _):
+                record
+            }
+        }
+    }
+
+    /// What one step did: its line in a group's reply, and the reply when it was undone alone.
+    private struct Undone {
+        var item: JSON
+        var single: ToolReply
     }
 
     private func undo(_ records: [ChangeRecord], journal: ChangeJournal) async throws -> ToolReply {
-        // Check everything first, then ask once, then change: a refusal leaves every event as it is.
+        // Calendars and lists are read once, and only when a step needs them.
+        var calendarCache: [CalendarInfo]?
+        var listCache: [CalendarInfo]?
+        func calendars() throws -> [CalendarInfo] {
+            if let calendarCache { return calendarCache }
+            let read = try visibleCalendars()
+            calendarCache = read
+            return read
+        }
+        func lists() throws -> [CalendarInfo] {
+            if let listCache { return listCache }
+            let read = try visibleLists()
+            listCache = read
+            return read
+        }
+        // Check everything first, then ask once, then change: a refusal leaves everything as it is.
         var steps: [UndoStep] = []
         for record in records {
             try Task.checkCancellation()
-            if record.reminderBefore != nil || record.reminderAfter != nil {
-                steps.append(.reminder(record))
-                continue
-            }
-            switch record.kind {
-            case .created:
-                guard let made = record.after else { throw ToolError("The journal entry is incomplete.") }
-                guard let current = try backend.event(made.isRecurring ? EventRef(eventID: made.eventID) : made.ref) else {
-                    steps.append(.alreadyGone(record))
-                    continue
-                }
-                try requireWritable([current])
-                // An event Claude made and nobody changed since goes without asking; anything else follows the delete policy.
-                let untouched = current.title == made.title && current.start == made.start && current.end == made.end && !current.hasOtherAttendees
-                steps.append(.deleteCreated(record, current: current, ask: !untouched))
-            case .updated:
-                guard let before = record.before, let after = record.after else { throw ToolError("The journal entry is incomplete.") }
-                let current = try event(after.ref)
-                try requireWritable([current])
-                var change = EventChange(restoring: before)
-                if before.calendarID == current.calendarID { change.calendarID = nil }
-                if let target = change.calendarID, settings.current.isReadOnly(target) {
-                    throw ToolError("\"\(before.title)\" came from \(before.calendarTitle), which Claude may now only read (Apple Calendar MCP settings). Nothing was changed.")
-                }
-                if before.recurrence == current.recurrence {
-                    change.recurrence = nil
-                    change.removeRecurrence = false
-                }
-                steps.append(.restore(record, current: current, change: change))
-            case .deleted:
-                guard let before = record.before else { throw ToolError("The journal entry is incomplete.") }
-                var draft = EventDraft(copying: before)
-                let calendars = try visibleCalendars()
-                if calendars.first(where: { $0.id == before.calendarID })?.writable != true {
-                    draft.calendarID = calendars.defaultWritable?.id
-                }
-                steps.append(.recreate(record, draft: draft))
-            }
+            steps.append(try record.isReminder ? planReminder(record, lists: lists) : planEvent(record, calendars: calendars))
         }
         try await authorizeUndo(steps)
 
         var done: [JSON] = []
         var failures: [JSON] = []
-        var single: ToolReply?
+        var last: Undone?
         for step in steps {
             try Task.checkCancellation()
             do {
-                switch step {
-                case let .deleteCreated(record, current, _):
-                    let made = record.after!
-                    try backend.delete(made.isRecurring ? EventRef(eventID: made.eventID) : made.ref, span: made.isRecurring ? .futureEvents : .thisEvent)
-                    done.append(Render.event(current))
-                    single = ToolReply(json: .obj([("undone", .string("created")), ("deleted", Render.event(current))]), summary: "deleted the event it created")
-                case .alreadyGone:
-                    single = ToolReply(json: .obj([("undone", .string("created")), ("note", .string("The event was already gone."))]), summary: "already gone")
-                case let .restore(record, current, change):
-                    let restored = try backend.update(current.ref, change, span: record.span)
-                    done.append(Render.event(restored))
-                    single = ToolReply(
-                        json: .obj([("undone", .string("updated")), ("event", Render.detail(restored, notesLimit: 4000))]),
-                        summary: "restored 1 event", event: restored)
-                case let .recreate(record, draft):
-                    let created = try backend.create(draft)
-                    journal.append([ChangeRecord(tool: "undo_change", kind: .created, before: nil, after: created)])
-                    done.append(Render.event(created))
-                    single = ToolReply(
-                        json: .obj([
-                            ("undone", .string("deleted")), ("created", Render.detail(created, notesLimit: 4000)),
-                            ("note", record.before!.hasOtherAttendees ? .string("Its attendees were not invited again (EventKit cannot); invite them in Calendar.") : nil),
-                        ]),
-                        summary: "brought back 1 event", event: created)
-                case .reminder(let record):
-                    single = try await undoReminder(record, journal: journal)
-                    if case .object(let pairs) = single!.json, let item = pairs.first(where: { $0.0 != "undone" && $0.0 != "note" })?.1 { done.append(item) }
-                }
+                let undone = try perform(step, journal: journal)
+                done.append(undone.item)
+                last = undone
                 journal.markUndone(step.record.id)
             } catch {
                 guard records.count > 1 else { throw error }
-                failures.append(.obj([("title", step.record.event.map { .string($0.title) } ?? step.record.reminder.map { .string($0.title) }), ("error", .string(String(describing: error)))]))
+                failures.append(.obj([("title", .string(step.record.title)), ("error", .string(String(describing: error)))]))
             }
         }
-        if records.count == 1, let single { return single }
+        if records.count == 1, let last { return last.single }
         return ToolReply(
             json: .obj([
                 ("undone", .string(records[0].kind.rawValue)), ("count", .int(Int64(done.count))), ("items", .array(done)),
@@ -164,17 +133,79 @@ extension CalendarToolbox {
             summary: "undid \(plural(done.count, "change"))\(failures.isEmpty ? "" : ", \(failures.count) failed")")
     }
 
-    /// One approval for the whole undo: deleting what changed since it was made, and changing shared events.
+    private func planEvent(_ record: ChangeRecord, calendars: () throws -> [CalendarInfo]) throws -> UndoStep {
+        switch record.kind {
+        case .created:
+            guard let made = record.after else { throw ToolError("The journal entry is incomplete.") }
+            // A repeating event goes as a whole series.
+            let target = made.isRecurring ? EventRef(eventID: made.eventID) : made.ref
+            guard let current = try backend.event(target) else { return .alreadyGone(record) }
+            try requireWritable([current], in: calendars())
+            // An event Claude made and nobody changed since goes without asking; anything else follows the delete policy.
+            let untouched = current.title == made.title && current.start == made.start && current.end == made.end && !current.hasOtherAttendees
+            return .deleteEvent(record, target: target, span: made.isRecurring ? .futureEvents : .thisEvent, current: current, ask: !untouched)
+        case .updated:
+            guard let before = record.before, let after = record.after else { throw ToolError("The journal entry is incomplete.") }
+            let current = try event(after.ref)
+            try requireWritable([current], in: calendars())
+            var change = EventChange(restoring: before)
+            if before.calendarID == current.calendarID { change.calendarID = nil }
+            if let target = change.calendarID, try calendars().first(where: { $0.id == target })?.writable != true {
+                throw ToolError("\"\(before.title)\" came from \(before.calendarTitle), which Claude may no longer change. Nothing was changed.")
+            }
+            if before.recurrence == current.recurrence {
+                change.recurrence = nil
+                change.removeRecurrence = false
+            }
+            return .restoreEvent(record, current: current, change: change)
+        case .deleted:
+            guard let before = record.before else { throw ToolError("The journal entry is incomplete.") }
+            var draft = EventDraft(copying: before)
+            if try calendars().first(where: { $0.id == before.calendarID })?.writable != true { draft.calendarID = try calendars().defaultWritable?.id }
+            return .recreateEvent(record, before: before, draft: draft)
+        }
+    }
+
+    private func planReminder(_ record: ChangeRecord, lists: () throws -> [CalendarInfo]) throws -> UndoStep {
+        switch record.kind {
+        case .created:
+            guard let made = record.reminderAfter else { throw ToolError("The journal entry is incomplete.") }
+            guard let current = try backend.reminder(made.id) else { return .alreadyGone(record) }
+            try requireWritable([current], in: lists())
+            return .deleteReminder(record, current: current, ask: current.title != made.title || current.due != made.due)
+        case .updated:
+            guard let before = record.reminderBefore, let after = record.reminderAfter else { throw ToolError("The journal entry is incomplete.") }
+            let current = try reminder(after.id)
+            try requireWritable([current], in: lists())
+            var change = ReminderChange(restoring: before)
+            if before.listID == current.listID { change.listID = nil }
+            if let target = change.listID, try lists().first(where: { $0.id == target })?.writable != true {
+                throw ToolError("\"\(before.title)\" came from \(before.listTitle), which Claude may no longer change. Nothing was changed.")
+            }
+            return .restoreReminder(record, current: current, change: change)
+        case .deleted:
+            guard let before = record.reminderBefore else { throw ToolError("The journal entry is incomplete.") }
+            var draft = ReminderDraft(copying: before)
+            if try lists().first(where: { $0.id == before.listID })?.writable != true { draft.listID = try lists().defaultWritable?.id }
+            return .recreateReminder(record, before: before, draft: draft)
+        }
+    }
+
+    /// One approval per kind for the whole undo: deleting what changed since it was made, and changing shared events.
     private func authorizeUndo(_ steps: [UndoStep]) async throws {
-        let deleting = steps.compactMap { step -> Event? in
-            if case let .deleteCreated(_, current, ask) = step, ask { return current }
-            return nil
+        var events: [Event] = []
+        var reminders: [Reminder] = []
+        var restoring: [(Event, EventChange)] = []
+        for step in steps {
+            switch step {
+            case let .deleteEvent(_, _, _, current, ask) where ask: events.append(current)
+            case let .deleteReminder(_, current, ask) where ask: reminders.append(current)
+            case let .restoreEvent(_, current, change): restoring.append((current, change))
+            default: break
+            }
         }
-        let restoring = steps.compactMap { step -> (Event, EventChange)? in
-            if case let .restore(_, current, change) = step { return (current, change) }
-            return nil
-        }
-        if !deleting.isEmpty { try await authorize(tool: "undo_change", deleting: true, events: deleting) }
+        if !events.isEmpty { try await authorize(tool: "undo_change", deleting: true, events: events) }
+        if !reminders.isEmpty { try await authorize(tool: "undo_change", deleting: reminders) }
         if !restoring.isEmpty {
             let detail = restoring.count == 1
                 ? Self.describe(restoring[0].0, restoring[0].1.applied(to: restoring[0].0))
@@ -182,12 +213,47 @@ extension CalendarToolbox {
             try await authorize(tool: "undo_change", deleting: false, events: restoring.map(\.0), detail: detail)
         }
     }
-}
 
-extension CalendarToolbox.UndoStep {
-    fileprivate var record: ChangeRecord {
-        switch self {
-        case .deleteCreated(let record, _, _), .alreadyGone(let record), .restore(let record, _, _), .recreate(let record, _), .reminder(let record): record
+    private func perform(_ step: UndoStep, journal: ChangeJournal) throws -> Undone {
+        func reply(_ kind: String, _ pairs: [(String, JSON?)], _ summary: String, event: Event? = nil) -> ToolReply {
+            ToolReply(json: .obj([("undone", .string(kind))] + pairs), summary: summary, event: event)
+        }
+        switch step {
+        case let .deleteEvent(_, target, span, current, _):
+            try backend.delete(target, span: span)
+            let item = Render.event(current)
+            return Undone(item: item, single: reply("created", [("deleted", item)], "deleted the event it created"))
+        case let .deleteReminder(_, current, _):
+            try backend.deleteReminder(current.id)
+            let item = Render.reminder(current, now: now())
+            return Undone(item: item, single: reply("created", [("deleted", item)], "deleted the reminder it created"))
+        case .alreadyGone(let record):
+            let note = JSON.string("The \(record.isReminder ? "reminder" : "event") was already gone.")
+            return Undone(item: .obj([("title", .string(record.title)), ("note", note)]), single: reply("created", [("note", note)], "already gone"))
+        case let .restoreEvent(record, current, change):
+            let restored = try backend.update(current.ref, change, span: record.span)
+            return Undone(
+                item: Render.event(restored),
+                single: reply("updated", [("event", Render.detail(restored, notesLimit: 4000))], "restored 1 event", event: restored))
+        case let .restoreReminder(_, current, change):
+            let item = Render.reminder(try backend.updateReminder(current.id, change), now: now())
+            return Undone(item: item, single: reply("updated", [("reminder", item)], "restored 1 reminder"))
+        case let .recreateEvent(_, before, draft):
+            let created = try backend.create(draft)
+            journal.append([ChangeRecord(tool: "undo_change", kind: .created, before: nil, after: created)])
+            return Undone(
+                item: Render.event(created),
+                single: reply(
+                    "deleted",
+                    [("created", Render.detail(created, notesLimit: 4000)),
+                     ("note", before.hasOtherAttendees ? .string("Its attendees were not invited again (EventKit cannot); invite them in Calendar.") : nil)],
+                    "brought back 1 event", event: created))
+        case let .recreateReminder(_, before, draft):
+            var created = try backend.createReminder(draft)
+            if before.isCompleted, let done = try? backend.updateReminder(created.id, ReminderChange(completed: true)) { created = done }
+            journal.append([ChangeRecord(tool: "undo_change", kind: .created, reminderBefore: nil, reminderAfter: created)])
+            let item = Render.reminder(created, now: now())
+            return Undone(item: item, single: reply("deleted", [("created", item)], "brought back 1 reminder"))
         }
     }
 }

@@ -64,12 +64,6 @@ public struct Reminder: Codable, Sendable, Hashable, Identifiable {
         }
     }
 
-    /// Open and due by `date` (a due day without a time counts from the start of that day).
-    public func isDue(by date: Date, calendar: Calendar = .current) -> Bool {
-        guard !isCompleted, let due else { return false }
-        return (dueHasTime ? due : calendar.startOfDay(for: due)) <= date
-    }
-
     /// "Call the bank · due Thu 22 Oct 17:00 · Errands", for approvals and summaries.
     public var summaryLine: String {
         var parts = [title]
@@ -186,20 +180,17 @@ public struct ReminderQuery: Codable, Sendable, Hashable {
     /// Open reminders due in this window (nil ends: unbounded; reminders without a due date only when both are nil).
     public var dueAfter: Date?
     public var dueBefore: Date?
-    /// Completed reminders completed in this window.
+    /// Completed reminders completed since this.
     public var completedAfter: Date?
-    public var completedBefore: Date?
 
     public init(
-        listIDs: [String]? = nil, status: Status = .open, dueAfter: Date? = nil, dueBefore: Date? = nil, completedAfter: Date? = nil,
-        completedBefore: Date? = nil
+        listIDs: [String]? = nil, status: Status = .open, dueAfter: Date? = nil, dueBefore: Date? = nil, completedAfter: Date? = nil
     ) {
         self.listIDs = listIDs
         self.status = status
         self.dueAfter = dueAfter
         self.dueBefore = dueBefore
         self.completedAfter = completedAfter
-        self.completedBefore = completedBefore
     }
 
     public func matches(_ reminder: Reminder) -> Bool {
@@ -216,10 +207,8 @@ public struct ReminderQuery: Codable, Sendable, Hashable {
             if let dueAfter, due < dueAfter { return false }
             if let dueBefore, due >= dueBefore { return false }
         }
-        if reminder.isCompleted, completedAfter != nil || completedBefore != nil {
-            guard let completed = reminder.completed else { return false }
-            if let completedAfter, completed < completedAfter { return false }
-            if let completedBefore, completed >= completedBefore { return false }
+        if reminder.isCompleted, let completedAfter {
+            guard let completed = reminder.completed, completed >= completedAfter else { return false }
         }
         return true
     }

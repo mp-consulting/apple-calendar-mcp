@@ -151,10 +151,12 @@ public enum VideoLink {
 /// Free-text matching over an event's words, people and places: case and accent insensitive.
 public enum EventText {
     public static func matches(_ event: Event, _ query: String, fields: Set<Field> = Set(Field.allCases)) -> Bool {
-        let terms = query.split(whereSeparator: \.isWhitespace).map(String.init)
-        guard !terms.isEmpty else { return true }
-        let haystack = text(of: event, fields: fields)
-        return terms.allSatisfy { haystack.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
+        matches(text: text(of: event, fields: fields), query)
+    }
+
+    /// Whether every word of `query` is in `text`.
+    public static func matches(text: String, _ query: String) -> Bool {
+        query.split(whereSeparator: \.isWhitespace).allSatisfy { text.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
     }
 
     public enum Field: String, CaseIterable, Sendable {
@@ -337,13 +339,14 @@ public enum Duplicates {
             var ids = Set<String>()
             for event in byKey[k]! where ids.insert(event.eventID).inserted { copies.append(event) }
             guard copies.count > 1 else { continue }
-            if copies.allSatisfy(\.isRecurring), let index = seenSeries[ids] {
+            let repeating = copies.allSatisfy(\.isRecurring)
+            if repeating, let index = seenSeries[ids] {
                 groups[index].occurrences += 1
                 continue
             }
             let keep = copies.first { !deletable($0) } ?? copies.max { score($0) < score($1) }!
             groups.append(Group(keep: keep, copies: copies.filter { $0.eventID != keep.eventID }, occurrences: 1))
-            if copies.allSatisfy(\.isRecurring) { seenSeries[ids] = groups.count - 1 }
+            if repeating { seenSeries[ids] = groups.count - 1 }
         }
         return groups
     }

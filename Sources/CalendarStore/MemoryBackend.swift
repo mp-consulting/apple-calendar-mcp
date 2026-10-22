@@ -249,7 +249,7 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
     public func createReminder(_ draft: ReminderDraft) throws -> Reminder {
         try lock.withLock {
             try checkReminderAccess()
-            let list = try writableList(draft.listID)
+            let list = try writableCalendar(draft.listID, in: listsOfReminders)
             let id = "REM-\(nextID)"
             nextID += 1
             let now = Date()
@@ -266,10 +266,10 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
         try lock.withLock {
             try checkReminderAccess()
             guard let current = reminderItems[id] else { throw CalendarError.reminderNotFound(id) }
-            _ = try writableList(current.listID)
+            _ = try writableCalendar(current.listID, in: listsOfReminders)
             var updated = change.applied(to: current)
             if let listID = change.listID {
-                let list = try writableList(listID)
+                let list = try writableCalendar(listID, in: listsOfReminders)
                 updated.listTitle = list.title
             }
             updated.modified = Date()
@@ -283,7 +283,7 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
         try lock.withLock {
             try checkReminderAccess()
             guard let current = reminderItems[id] else { throw CalendarError.reminderNotFound(id) }
-            _ = try writableList(current.listID)
+            _ = try writableCalendar(current.listID, in: listsOfReminders)
             reminderItems[id] = nil
             changes += 1
         }
@@ -291,13 +291,6 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
 
     private func checkReminderAccess() throws {
         guard reminderState == .granted else { throw CalendarError("No access to Reminders (\(reminderState)).") }
-    }
-
-    private func writableList(_ id: String?) throws -> CalendarInfo {
-        let list = id.map { id in listsOfReminders.first { $0.id == id } } ?? listsOfReminders.defaultWritable
-        guard let list else { throw CalendarError("No reminder list with id \(id ?? "(default)").") }
-        guard list.writable else { throw CalendarError.readOnly(list.title) }
-        return list
     }
 
     private func newID() -> String {
@@ -316,10 +309,11 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
         guard state == .granted else { throw CalendarError("No calendar access (\(state)).") }
     }
 
-    private func writableCalendar(_ id: String?) throws -> CalendarInfo {
-        let calendar = id.map { id in calendarList.first { $0.id == id } }
-            ?? calendarList.defaultWritable
-        guard let calendar else { throw CalendarError("No calendar with id \(id ?? "(default)").") }
+    /// A calendar (or reminder list, from `lists`) that takes changes; the default one for nil.
+    private func writableCalendar(_ id: String?, in lists: [CalendarInfo]? = nil) throws -> CalendarInfo {
+        let all = lists ?? calendarList
+        let calendar = id.map { id in all.first { $0.id == id } } ?? all.defaultWritable
+        guard let calendar else { throw CalendarError("No \(lists == nil ? "calendar" : "reminder list") with id \(id ?? "(default)").") }
         guard calendar.writable else { throw CalendarError.readOnly(calendar.title) }
         return calendar
     }

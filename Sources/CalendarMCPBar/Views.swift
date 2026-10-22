@@ -539,7 +539,7 @@ struct ApprovalBlock: View {
             }
             HStack {
                 if request.kind == .delete {
-                    Text(request.subject == nil ? "Calendar has no Trash; undo_change can bring it back." : "undo_change can bring it back.")
+                    Text(request.subject == .reminder ? "undo_change can bring it back." : "Calendar has no Trash; undo_change can bring it back.")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -775,7 +775,7 @@ struct SettingsTab: View {
             ForEach(model.reminderLists) { list in CalendarAccessRow(model: model, calendar: list) }
         case .notDetermined:
             Row(systemImage: "checklist", title: "Let Claude use Reminders", detail: "List, add and complete reminders. macOS asks once.") {
-                Button("Allow…") { Task { await model.requestReminderAccess() } }.glassButton().controlSize(.small)
+                Button("Allow…") { Task { await model.requestAccess(to: .reminder) } }.glassButton().controlSize(.small)
             }
         case .writeOnly, .denied, .restricted, .unavailable:
             Row(systemImage: "checklist", title: "Reminders access is off", detail: "Turn on Full Access in Privacy & Security › Reminders.") {

@@ -136,26 +136,17 @@ final class AgentModel {
 
     // MARK: Calendar access and the bridge
 
-    /// Reminders are optional: asked for only when the user turns them on in Settings.
-    func requestReminderAccess() async {
+    /// Asks macOS for Calendars (or Reminders, which are optional: asked for only from Settings); once refused, macOS
+    /// does not ask again, so System Settings opens instead.
+    func requestAccess(to entity: EKEntityType = .event) async {
         guard let eventKit = backend as? EventKitBackend else { return }
-        if EventKitBackend.authorization(for: .reminder) == .denied {
-            openPrivacySettings("Privacy_Reminders")
+        if EventKitBackend.authorization(for: entity) == .denied {
+            openPrivacySettings(entity == .event ? "Privacy_Calendars" : "Privacy_Reminders")
             return
         }
         NSApp.activate()
-        reminderAccess = await eventKit.requestReminderAccess()
-        refreshCalendar()
-    }
-
-    func requestCalendarAccess() async {
-        guard let eventKit = backend as? EventKitBackend else { return }
-        if EventKitBackend.authorization() == .denied {
-            openCalendarPrivacySettings()
-            return
-        }
-        NSApp.activate()
-        access = await eventKit.requestAccess()
+        let granted = await eventKit.requestAccess(to: entity)
+        if entity == .event { access = granted } else { reminderAccess = granted }
         refreshCalendar()
     }
 

@@ -114,11 +114,33 @@ public final class CalendarToolbox: @unchecked Sendable {
 
     /// The calendars named in `key` (ids, titles, or "Account/Title"), else nil for "all visible".
     func calendarIDs(_ arguments: Arguments, key: String = "calendars") throws -> [String]? {
+        try containerIDs(arguments, key: key, noun: "calendar", visible: visibleCalendars)
+    }
+
+    /// The calendars or reminder lists named in `key`, else nil for "all visible" (`visible` is read only when needed).
+    func containerIDs(_ arguments: Arguments, key: String, noun: String, visible: () throws -> [CalendarInfo]) throws -> [String]? {
         let names = try arguments.strings(key)
         if names.isEmpty && settings.current.hiddenCalendars.isEmpty { return nil }
-        let visible = try visibleCalendars()
-        guard !names.isEmpty else { return visible.map(\.id) }
-        return try names.map { try resolveCalendar($0, in: visible).id }
+        let shown = try visible()
+        guard !names.isEmpty else { return shown.map(\.id) }
+        return try names.map { try resolveCalendar($0, in: shown, noun: noun).id }
+    }
+
+    /// A calendar or list Claude may change: the one named in `key`, else the default one (`visible` from
+    /// `settings.visible`, which marks the ones Claude may only read).
+    func target(_ arguments: Arguments, key: String, in visible: [CalendarInfo], noun: String) throws -> CalendarInfo {
+        let found: CalendarInfo
+        if let name = try arguments.string(key) {
+            found = try resolveCalendar(name, in: visible, noun: noun)
+        } else {
+            guard let preferred = visible.defaultWritable else { throw ToolError("No \(noun) can take anything new; pass \(key).") }
+            found = preferred
+        }
+        guard found.writable else {
+            let why = settings.current.isReadOnly(found.id) ? "Claude may only read it (Apple Calendar MCP settings)" : "it is read-only"
+            throw ToolError("\"\(found.title)\" (\(found.account)): \(why); pick another \(noun).")
+        }
+        return found
     }
 
     /// One calendar by id, title, or "Account/Title" (titles repeat across accounts).
@@ -158,18 +180,21 @@ public final class CalendarToolbox: @unchecked Sendable {
         }
     }
 
-    /// Throws for events in calendars Calendar or the user's settings keep read-only; `nothing` ends the message.
-    func requireWritable(_ events: [Event], nothing: String = "Nothing was changed.") throws {
+    /// Throws unless every item's calendar (or list) is among `visible` and writable there: `settings.visible` marks
+    /// the ones Claude may only read. `nothing` ends the message.
+    func requireWritable(
+        _ items: [(title: String, containerID: String, containerTitle: String)], in visible: [CalendarInfo], nothing: String
+    ) throws {
         let current = settings.current
-        let calendars = try backend.calendars()
-        for event in events {
-            if current.isReadOnly(event.calendarID) {
-                throw ToolError("\"\(event.title)\" is in \(event.calendarTitle), which Claude may only read (Apple Calendar MCP settings). \(nothing)")
-            }
-            if calendars.first(where: { $0.id == event.calendarID })?.writable == false {
-                throw ToolError("\"\(event.title)\" is in a read-only calendar (\(event.calendarTitle)). \(nothing)")
-            }
+        for item in items where visible.first(where: { $0.id == item.containerID })?.writable != true {
+            let why = current.isReadOnly(item.containerID) ? "which Claude may only read (Apple Calendar MCP settings)" : "which is read-only"
+            throw ToolError("\"\(item.title)\" is in \(item.containerTitle), \(why). \(nothing)")
         }
+    }
+
+    /// For events; pass `calendars` (from `visibleCalendars()`) when the call already has them.
+    func requireWritable(_ events: [Event], in calendars: [CalendarInfo]? = nil, nothing: String = "Nothing was changed.") throws {
+        try requireWritable(events.map { ($0.title, $0.calendarID, $0.calendarTitle) }, in: calendars ?? visibleCalendars(), nothing: nothing)
     }
 
     func checkBatch(_ count: Int) throws {
@@ -193,7 +218,7 @@ public final class CalendarToolbox: @unchecked Sendable {
         var ask = false
         if deleting {
             switch current.deletePolicy {
-            case .never: return .refuse("Deleting events is turned off (delete policy \"never\"). Nothing was deleted.")
+            case .never: return .refuse("Deleting is turned off (delete policy \"never\"). Nothing was deleted.")
             case .confirm: ask = true
             case .allow: break
             }
@@ -220,22 +245,36 @@ public final class CalendarToolbox: @unchecked Sendable {
 
     /// Applies the policies to `events`, asking the user in the app when they say so; throws when refused or declined.
     func authorize(tool: String, deleting: Bool, events: [Event], detail: String? = nil) async throws {
+        let people = Array(Set(events.filter(\.hasOtherAttendees).flatMap { $0.otherPeople.map(\.formatted) })).sorted()
+        try await authorize(
+            tool: tool, deleting: deleting, events: events, title: events.count == 1 ? events[0].title : "\(events.count) events",
+            items: events.map(\.summaryLine), attendees: people, detail: detail)
+    }
+
+    /// The same for reminders, which have no attendees: only the delete policy applies.
+    func authorize(tool: String, deleting reminders: [Reminder]) async throws {
+        try await authorize(
+            tool: tool, deleting: true, events: [], title: reminders.count == 1 ? reminders[0].title : "\(reminders.count) reminders",
+            items: reminders.map(\.summaryLine), subject: .reminder)
+    }
+
+    private func authorize(
+        tool: String, deleting: Bool, events: [Event], title: String, items: [String], attendees: [String] = [], detail: String? = nil,
+        subject: ApprovalRequest.Subject? = nil
+    ) async throws {
         switch approval(deleting: deleting, events: events) {
         case .allow: return
         case .refuse(let reason): throw ToolError(reason)
         case .ask: break
         }
-        let shared = events.filter(\.hasOtherAttendees)
-        let people = Array(Set(shared.flatMap { $0.otherPeople.map(\.formatted) })).sorted()
-        let title = events.count == 1 ? events[0].title : "\(events.count) events"
         try await ask(ApprovalRequest(
-            tool: tool, client: clientName, kind: deleting ? .delete : .notify, title: title,
-            items: Self.lines(events.map(\.summaryLine)), attendees: Array(people.prefix(40)), detail: detail))
+            tool: tool, client: clientName, kind: deleting ? .delete : .notify, title: title, items: Self.lines(items),
+            attendees: Array(attendees.prefix(40)), detail: detail, subject: subject))
     }
 
-    /// At most 30 lines for an approval.
-    static func lines(_ all: [String]) -> [String] {
-        Array(all.prefix(30)) + (all.count > 30 ? ["… and \(all.count - 30) more"] : [])
+    /// At most `limit` lines, then "… and N more".
+    static func lines(_ all: [String], limit: Int = 30) -> [String] {
+        Array(all.prefix(limit)) + (all.count > limit ? ["… and \(all.count - limit) more"] : [])
     }
 
     /// Asks the user in the app; throws unless they approve.
@@ -255,6 +294,44 @@ public final class CalendarToolbox: @unchecked Sendable {
     }
 
     func record(_ records: [ChangeRecord]) { journal?.append(records) }
+
+    /// What a call that changes several items did: one undo group, and the failures listed rather than thrown.
+    struct Applied<T> {
+        var done: [T] = []
+        var records: [ChangeRecord] = []
+        var failures: [JSON] = []
+        let group = UUID()
+    }
+
+    /// Runs `body` on each item, between checks for cancellation, and journals what changed as one group. A failure
+    /// is listed (named by `label`) and the next item goes on.
+    func applyEach<Item, T>(
+        _ items: [Item], label: (Item) -> [(String, JSON?)], _ body: (Item, UUID) throws -> (T, ChangeRecord)
+    ) throws -> Applied<T> {
+        var applied = Applied<T>()
+        for item in items {
+            try Task.checkCancellation()
+            do {
+                let (done, record) = try body(item, applied.group)
+                applied.done.append(done)
+                applied.records.append(record)
+            } catch {
+                applied.failures.append(.obj(label(item) + [("error", .string(String(describing: error)))]))
+            }
+        }
+        record(applied.records)
+        return applied
+    }
+
+    /// The `failed` and `undo_id` keys of a reply about `applied`.
+    func outcome<T>(_ applied: Applied<T>) -> [(String, JSON?)] {
+        [("failed", applied.failures.isEmpty ? nil : .array(applied.failures)), ("undo_id", undoID(applied.records, group: applied.group))]
+    }
+
+    /// "deleted 3 events, 1 failed".
+    static func summary<T>(_ verb: String, _ noun: String, _ applied: Applied<T>) -> String {
+        "\(verb) \(plural(applied.done.count, noun))\(applied.failures.isEmpty ? "" : ", \(applied.failures.count) failed")"
+    }
 
     /// The id `undo_change` takes for `record` (nil when undo is off).
     func undoID(_ record: ChangeRecord) -> JSON? { journal == nil ? nil : .string(record.id.uuidString) }
@@ -306,10 +383,7 @@ public final class CalendarToolbox: @unchecked Sendable {
         do {
             var parsed = Arguments(arguments)
             parsed.now = now()
-            if let zone = try parsed.string("time_zone") {
-                guard let timeZone = TimeZone(identifier: zone) else { throw ToolError("time_zone \"\(zone)\" is not a time zone (use names like Europe/Paris)") }
-                parsed.timeZone = timeZone
-            }
+            if let timeZone = try parsed.timeZone("time_zone") { parsed.timeZone = timeZone }
             if definition.guardsChanges { try requireChanges() }
             let reply = try await definition.run(parsed)
             text = (isWrite ? reply.json.adding("server_version", .string(CalendarMCPVersion.build)) : reply.json).serialized()

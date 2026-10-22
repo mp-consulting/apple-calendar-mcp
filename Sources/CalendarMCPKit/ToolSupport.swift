@@ -185,6 +185,13 @@ public struct Arguments: Sendable {
         return nil
     }
 
+    /// A time zone by name (`Europe/Paris`).
+    public func timeZone(_ key: String) throws -> TimeZone? {
+        guard let zone = try string(key) else { return nil }
+        guard let timeZone = TimeZone(identifier: zone) else { throw ToolError("\(key) \"\(zone)\" is not a time zone (use names like Europe/Paris)") }
+        return timeZone
+    }
+
     /// `HH:MM` as minutes after midnight.
     public func timeOfDay(_ key: String) throws -> Int? {
         guard let text = try string(key) else { return nil }

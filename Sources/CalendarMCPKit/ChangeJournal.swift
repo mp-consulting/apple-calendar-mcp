@@ -48,6 +48,11 @@ public struct ChangeRecord: Codable, Sendable, Identifiable, Equatable {
     /// The reminder the record is about (after the change when there is one).
     public var reminder: Reminder? { reminderAfter ?? reminderBefore }
 
+    public var isReminder: Bool { reminder != nil }
+
+    /// The title of what it changed.
+    public var title: String { event?.title ?? reminder?.title ?? "" }
+
     public init(
         id: UUID = UUID(), date: Date = Date(), tool: String, kind: Kind, span: Span = .thisEvent, before: Event?, after: Event?,
         group: UUID? = nil

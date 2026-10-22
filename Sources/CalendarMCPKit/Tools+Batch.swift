@@ -14,9 +14,10 @@ extension CalendarToolbox {
             var item = Arguments(fields)
             item.now = arguments.now
             item.timeZone = arguments.timeZone
-            if let zone = try item.string("time_zone") {
-                guard let timeZone = TimeZone(identifier: zone) else { throw ToolError("\(key)[\(index)].time_zone \"\(zone)\" is not a time zone") }
-                item.timeZone = timeZone
+            do {
+                if let timeZone = try item.timeZone("time_zone") { item.timeZone = timeZone }
+            } catch {
+                throw ToolError("\(key)[\(index)].\(error)")
             }
             return item
         }
@@ -52,33 +53,20 @@ extension CalendarToolbox {
                 "dry_run": Schema.boolean("Show what would be added without adding anything"),
             ], required: ["events"]), kind: .change
         ) { arguments in
-            let planned = try self.each(try self.items(arguments, "events"), "events", self.newEvent)
+            let calendars = try self.visibleCalendars()
+            let planned = try self.each(try self.items(arguments, "events"), "events") { try self.newEvent($0, calendars: calendars) }
             if try arguments.bool("dry_run") == true {
                 return ToolReply(
                     json: .obj([("dry_run", .bool(true)), ("would_create", .array(planned.map { Self.preview($0.0, in: $0.1) }))]),
                     summary: "dry run: \(plural(planned.count, "event"))")
             }
-            let group = UUID()
-            var created: [Event] = []
-            var records: [ChangeRecord] = []
-            var failures: [JSON] = []
-            for (index, (draft, _)) in planned.enumerated() {
-                try Task.checkCancellation()
-                do {
-                    let event = try self.backend.create(draft)
-                    created.append(event)
-                    records.append(ChangeRecord(tool: "create_events", kind: .created, before: nil, after: event, group: group))
-                } catch {
-                    failures.append(.obj([("index", .int(Int64(index))), ("title", .string(draft.title)), ("error", .string(String(describing: error)))]))
-                }
+            let applied = try self.applyEach(planned.map(\.0), label: { [("title", .string($0.title))] }) { draft, group in
+                let event = try self.backend.create(draft)
+                return (event, ChangeRecord(tool: "create_events", kind: .created, before: nil, after: event, group: group))
             }
-            self.record(records)
             return ToolReply(
-                json: .obj([
-                    ("created", .array(created.map(Render.event))), ("failed", failures.isEmpty ? nil : .array(failures)),
-                    ("undo_id", self.undoID(records, group: group)),
-                ]),
-                summary: "created \(plural(created.count, "event"))\(failures.isEmpty ? "" : ", \(failures.count) failed")", event: created.first)
+                json: .obj([("created", .array(applied.done.map(Render.event)))] + self.outcome(applied)),
+                summary: Self.summary("created", "event", applied), event: applied.done.first)
         }
     }
 
@@ -101,11 +89,14 @@ extension CalendarToolbox {
                 "dry_run": Schema.boolean("Show what would change without changing anything"),
             ], required: ["changes"]), kind: .change, idempotent: true
         ) { arguments in
-            let plans = try self.each(try self.items(arguments, "changes"), "changes", self.plannedUpdate)
+            let items = try self.items(arguments, "changes")
+            // Each event once, checked before anything is read.
             var seen = Set<String>()
-            if let twice = plans.first(where: { !seen.insert($0.ref.string).inserted }) {
-                throw ToolError("\"\(twice.current.title)\" is changed twice; give each event once.")
+            if let twice = try items.map({ try $0.ref("id").string }).first(where: { !seen.insert($0).inserted }) {
+                throw ToolError("\(twice) is changed twice; give each event once.")
             }
+            let calendars = try self.visibleCalendars()
+            let plans = try self.each(items, "changes") { try self.plannedUpdate($0, calendars: calendars) }
             let events = plans.map(\.current)
             if try arguments.bool("dry_run") == true {
                 return ToolReply(
@@ -115,30 +106,16 @@ extension CalendarToolbox {
                     ] + self.approvalPairs(deleting: false, events: events)),
                     summary: "dry run: \(plural(plans.count, "event"))")
             }
-            let lines = plans.prefix(8).map { "\($0.current.title): \($0.description.prefix(1).lowercased() + $0.description.dropFirst())" }
-            let detail = plans.count == 1 ? plans[0].description : (lines + (plans.count > 8 ? ["… and \(plans.count - 8) more"] : [])).joined(separator: "\n")
+            let lines = plans.map { "\($0.current.title): \($0.description.prefix(1).lowercased() + $0.description.dropFirst())" }
+            let detail = plans.count == 1 ? plans[0].description : Self.lines(lines, limit: 8).joined(separator: "\n")
             try await self.authorize(tool: "update_events", deleting: false, events: events, detail: detail)
-            let group = UUID()
-            var updated: [Event] = []
-            var records: [ChangeRecord] = []
-            var failures: [JSON] = []
-            for plan in plans {
-                try Task.checkCancellation()
-                do {
-                    let event = try self.backend.update(plan.ref, plan.change, span: plan.span)
-                    updated.append(event)
-                    records.append(ChangeRecord(tool: "update_events", kind: .updated, span: plan.span, before: plan.current, after: event, group: group))
-                } catch {
-                    failures.append(.obj([("id", .string(plan.ref.string)), ("title", .string(plan.current.title)), ("error", .string(String(describing: error)))]))
-                }
+            let applied = try self.applyEach(plans, label: { [("id", .string($0.ref.string)), ("title", .string($0.current.title))] }) { plan, group in
+                let event = try self.backend.update(plan.ref, plan.change, span: plan.span)
+                return (event, ChangeRecord(tool: "update_events", kind: .updated, span: plan.span, before: plan.current, after: event, group: group))
             }
-            self.record(records)
             return ToolReply(
-                json: .obj([
-                    ("updated", .array(updated.map(Render.event))), ("failed", failures.isEmpty ? nil : .array(failures)),
-                    ("undo_id", self.undoID(records, group: group)),
-                ]),
-                summary: "updated \(plural(updated.count, "event"))\(failures.isEmpty ? "" : ", \(failures.count) failed")", event: updated.first)
+                json: .obj([("updated", .array(applied.done.map(Render.event)))] + self.outcome(applied)),
+                summary: Self.summary("updated", "event", applied), event: applied.done.first)
         }
     }
 }

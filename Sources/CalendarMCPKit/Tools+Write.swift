@@ -70,22 +70,8 @@ extension CalendarToolbox {
     }
 
     /// A calendar the user may change, by name; nil for the default one (checked visible and writable).
-    func targetCalendar(_ arguments: Arguments) throws -> CalendarInfo {
-        let visible = try visibleCalendars()
-        let calendar: CalendarInfo
-        if let name = try arguments.string("calendar") {
-            calendar = try resolveCalendar(name, in: visible)
-        } else {
-            guard let preferred = visible.defaultWritable else {
-                throw ToolError("No calendar can take new events; pass calendar (see list_calendars).")
-            }
-            calendar = preferred
-        }
-        guard calendar.writable else {
-            let why = settings.current.isReadOnly(calendar.id) ? "Claude may only read it (Apple Calendar MCP settings)" : "it is read-only"
-            throw ToolError("\"\(calendar.title)\" (\(calendar.account)): \(why); pick another calendar.")
-        }
-        return calendar
+    func targetCalendar(_ arguments: Arguments, in calendars: [CalendarInfo]? = nil) throws -> CalendarInfo {
+        try target(arguments, key: "calendar", in: calendars ?? visibleCalendars(), noun: "calendar")
     }
 
     /// Start and end from the arguments, for a new event or on top of `current`.
@@ -140,10 +126,11 @@ extension CalendarToolbox {
         return span
     }
 
-    /// A new event from the arguments of `create_event` (or one item of `create_events`), and its calendar.
-    func newEvent(_ arguments: Arguments) throws -> (EventDraft, CalendarInfo) {
+    /// A new event from the arguments of `create_event` (or one item of `create_events`), and its calendar; a batch
+    /// passes the visible calendars it read once.
+    func newEvent(_ arguments: Arguments, calendars: [CalendarInfo]? = nil) throws -> (EventDraft, CalendarInfo) {
         let title = try arguments.requiredString("title")
-        let calendar = try targetCalendar(arguments)
+        let calendar = try targetCalendar(arguments, in: calendars)
         let (startArgument, endArgument, allDay) = try times(arguments, current: nil)
         guard let start = startArgument else { throw ToolError("start is required") }
         let draft = EventDraft(
@@ -176,11 +163,12 @@ extension CalendarToolbox {
         var description: String
     }
 
-    func plannedUpdate(_ arguments: Arguments) throws -> PlannedUpdate {
+    func plannedUpdate(_ arguments: Arguments, calendars: [CalendarInfo]? = nil) throws -> PlannedUpdate {
         let ref = try arguments.ref("id")
         let span = try Self.span(arguments)
         let current = try event(ref)
-        try requireWritable([current])
+        let calendars = try calendars ?? visibleCalendars()
+        try requireWritable([current], in: calendars)
         let (start, end, allDay) = try times(arguments, current: current)
         var change = EventChange(
             title: try arguments.string("title"), start: start, end: end, isAllDay: allDay, timeZone: try arguments.string("time_zone"),
@@ -189,7 +177,7 @@ extension CalendarToolbox {
             recurrence: try recurrence(arguments), removeRecurrence: try arguments.bool("remove_repeat") ?? false)
         var targetTitle: String?
         if arguments.has("calendar") {
-            let target = try targetCalendar(arguments)
+            let target = try targetCalendar(arguments, in: calendars)
             if target.id != current.calendarID {
                 change.calendarID = target.id
                 targetTitle = target.title
@@ -246,23 +234,22 @@ extension CalendarToolbox {
             Schema.object(properties, required: ["id"]), kind: .change, idempotent: true
         ) { arguments in
             let plan = try self.plannedUpdate(arguments)
-            let (ref, span, current, change, preview, description) = (plan.ref, plan.span, plan.current, plan.change, plan.preview, plan.description)
             if try arguments.bool("dry_run") == true {
                 return ToolReply(
                     json: .obj([
-                        ("dry_run", .bool(true)), ("event", Render.event(current)), ("would_change", .string(description)),
-                        ("after", Render.event(preview)),
-                    ] + self.approvalPairs(deleting: false, events: [current])),
-                    summary: "dry run: 1 event", event: current)
+                        ("dry_run", .bool(true)), ("event", Render.event(plan.current)), ("would_change", .string(plan.description)),
+                        ("after", Render.event(plan.preview)),
+                    ] + self.approvalPairs(deleting: false, events: [plan.current])),
+                    summary: "dry run: 1 event", event: plan.current)
             }
-            try await self.authorize(tool: "update_event", deleting: false, events: [current], detail: description)
-            let updated = try self.backend.update(ref, change, span: span)
-            let record = ChangeRecord(tool: "update_event", kind: .updated, span: span, before: current, after: updated)
+            try await self.authorize(tool: "update_event", deleting: false, events: [plan.current], detail: plan.description)
+            let updated = try self.backend.update(plan.ref, plan.change, span: plan.span)
+            let record = ChangeRecord(tool: "update_event", kind: .updated, span: plan.span, before: plan.current, after: updated)
             self.record([record])
             return ToolReply(
                 json: .obj([
-                    ("updated", Render.detail(updated, notesLimit: 4000)), ("changed", .string(description)),
-                    ("span", current.isRecurring ? .string(span.rawValue) : nil),
+                    ("updated", Render.detail(updated, notesLimit: 4000)), ("changed", .string(plan.description)),
+                    ("span", plan.current.isRecurring ? .string(plan.span.rawValue) : nil),
                     ("undo_id", self.undoID(record)),
                 ]),
                 summary: "updated 1 event", event: updated)
@@ -299,29 +286,14 @@ extension CalendarToolbox {
                     summary: "dry run: \(plural(events.count, "event"))")
             }
             try await self.authorize(tool: "delete_event", deleting: true, events: events, detail: span == .futureEvents ? "Repeating events: this and every later occurrence." : nil)
-            var deleted: [Event] = []
-            var records: [ChangeRecord] = []
-            var failures: [JSON] = []
-            let group = UUID()
-            for (ref, event) in zip(refs, events) {
-                try Task.checkCancellation()
-                do {
-                    try self.backend.delete(ref, span: span)
-                    deleted.append(event)
-                    records.append(ChangeRecord(tool: "delete_event", kind: .deleted, span: span, before: event, after: nil, group: group))
-                } catch {
-                    failures.append(.obj([("id", .string(ref.string)), ("error", .string(String(describing: error)))]))
-                }
+            let pairs = Array(zip(refs, events))
+            let applied = try self.applyEach(pairs, label: { [("id", .string($0.0.string)), ("title", .string($0.1.title))] }) { pair, group in
+                try self.backend.delete(pair.0, span: span)
+                return (pair.1, ChangeRecord(tool: "delete_event", kind: .deleted, span: span, before: pair.1, after: nil, group: group))
             }
-            self.record(records)
             return ToolReply(
-                json: .obj([
-                    ("deleted", .array(deleted.map(Render.event))),
-                    ("failed", failures.isEmpty ? nil : .array(failures)),
-                    ("undo_id", self.undoID(records, group: group)),
-                    ("undo_ids", self.undoIDs(records)),
-                ]),
-                summary: "deleted \(plural(deleted.count, "event"))\(failures.isEmpty ? "" : ", \(failures.count) failed")")
+                json: .obj([("deleted", .array(applied.done.map(Render.event)))] + self.outcome(applied) + [("undo_ids", self.undoIDs(applied.records))]),
+                summary: Self.summary("deleted", "event", applied))
         }
     }
 

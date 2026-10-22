@@ -208,9 +208,8 @@ extension CalendarToolbox {
                 events: events, from: max(first, now), to: end, duration: 15 * 60, hours: settings.workHours, calendar: calendar)
             let conflicts = Conflicts.find(events)
             let pending = all.filter { $0.myStatus == .pending }
-            // Reminders due by the end of the period (overdue ones too), when the user gave Reminders access.
-            let due = (try? self.backend.reminderAccess().canRead) == true
-                ? ((try? self.backend.reminders(ReminderQuery(dueBefore: end))) ?? []).filter { !settings.isHidden($0.listID) } : []
+            // Reminders due by the end of the period (overdue ones too); none without Reminders access.
+            let due = (try? self.visibleReminders(ReminderQuery(dueBefore: end))) ?? []
             let meetings = timed.filter(\.hasOtherAttendees)
             let meetingHours = meetings.reduce(0) { $0 + $1.duration } / 3600
             let busyHours = Busy.intervals(timed).reduce(0) { $0 + $1.duration } / 3600
@@ -316,11 +315,10 @@ extension CalendarToolbox {
 
     /// The other person's working hours and calendar, when `other_time_zone` is given.
     static func otherHours(_ arguments: Arguments) throws -> (hours: WorkHours, calendar: Calendar)? {
-        guard let zone = try arguments.string("other_time_zone") else {
+        guard let timeZone = try arguments.timeZone("other_time_zone") else {
             if arguments.has("other_hours") || arguments.has("other_weekdays") { throw ToolError("other_hours and other_weekdays need other_time_zone") }
             return nil
         }
-        guard let timeZone = TimeZone(identifier: zone) else { throw ToolError("other_time_zone \"\(zone)\" is not a time zone (use names like Asia/Tokyo)") }
         var hours = WorkHours()
         if let text = try arguments.string("other_hours") {
             let bounds = text.split(whereSeparator: { "-–— ".contains($0) }).map(String.init)
@@ -376,8 +374,10 @@ extension CalendarToolbox {
             ]), kind: .read
         ) { arguments in
             let (start, end) = try self.period(arguments, defaultStart: self.startOfToday, defaultLength: 90 * 86_400)
-            let writable = Set(try self.visibleCalendars().filter(\.writable).map(\.id))
-            let events = try self.events(from: start, to: end, calendarIDs: self.calendarIDs(arguments))
+            let visible = try self.visibleCalendars()
+            let writable = Set(visible.filter(\.writable).map(\.id))
+            let ids = try self.containerIDs(arguments, key: "calendars", noun: "calendar", visible: { visible })
+            let events = try self.events(from: start, to: end, calendarIDs: ids)
             let groups = Duplicates.find(events) { writable.contains($0.calendarID) }
             let limit = try arguments.int("limit", default: 50, in: 1...500)
             var deleteIDs: [String] = []
