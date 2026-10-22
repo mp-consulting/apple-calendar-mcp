@@ -339,33 +339,48 @@ struct EventRow: View {
         let isNow = event.start <= now && event.end > now
         let isPast = event.end <= now
         let isNext = model.nextEvent?.id == event.id
-        Button { model.open(event) } label: {
-            HStack(alignment: .center, spacing: 10) {
-                VStack(alignment: .trailing, spacing: 0) {
-                    Text(event.start, format: .dateTime.hour().minute()).font(.caption.monospacedDigit())
-                    Text(event.end, format: .dateTime.hour().minute()).font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+        // The Join button sits beside the row's own button, not inside it: a button in a button's label is unreliable.
+        HStack(spacing: 8) {
+            Button { model.open(event) } label: {
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text(event.start, format: .dateTime.hour().minute()).font(.caption.monospacedDigit())
+                        Text(event.end, format: .dateTime.hour().minute()).font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                    }
+                    .frame(width: 44, alignment: .trailing)
+                    RoundedRectangle(cornerRadius: 1.5).fill(model.color(of: event)).frame(width: 3, height: 30)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(event.title).font(.callout).lineLimit(1)
+                        Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 6)
+                    if conflict { Image(systemName: "exclamationmark.2").font(.caption).foregroundStyle(.orange).help("Overlaps another event") }
+                    if isNow {
+                        Chip(text: "Now", tint: .green)
+                    } else if isNext {
+                        Chip(text: model.relative(event.start))
+                    }
                 }
-                .frame(width: 44, alignment: .trailing)
-                RoundedRectangle(cornerRadius: 1.5).fill(model.color(of: event)).frame(width: 3, height: 30)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(event.title).font(.callout).lineLimit(1)
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer(minLength: 6)
-                if conflict { Image(systemName: "exclamationmark.2").font(.caption).foregroundStyle(.orange).help("Overlaps another event") }
-                if isNow {
-                    Chip(text: "Now", tint: .green)
-                } else if isNext {
-                    Chip(text: model.relative(event.start))
-                }
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 4)
-            .opacity(isPast ? 0.5 : 1)
-            .contentShape(Rectangle())
+            .buttonStyle(PressableButtonStyle())
+            .help("Show in Calendar")
+            if let call = joinable(now: now) {
+                Button("Join") { NSWorkspace.shared.open(call) }
+                    .glassButton(prominent: isNow).controlSize(.small)
+                    .help("Join the video call (\(call.host() ?? "link"))")
+                    .accessibilityLabel("Join \(event.title)")
+            }
         }
-        .buttonStyle(PressableButtonStyle())
-        .help("Show in Calendar")
+        .padding(.horizontal, 16)
+        .padding(.vertical, 4)
+        .opacity(isPast ? 0.5 : 1)
+    }
+
+    /// The call link of an event that is on, or starts within 10 minutes.
+    private func joinable(now: Date) -> URL? {
+        guard event.end > now, event.start.timeIntervalSince(now) <= 600, let link = VideoLink.find(in: event) else { return nil }
+        return URL(string: link)
     }
 
     private var subtitle: String {
