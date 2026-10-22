@@ -18,6 +18,9 @@ Pin down, asking only for what is missing and cannot be guessed:
 1. Call `find_free_time` with `start`, `end`, `duration_minutes`, and `buffer_minutes` (10 by default, 30 if
    travel is involved). Leave `work_hours_only` on unless the user wants evenings or weekends. Use
    `earliest` and `latest` (`HH:MM`) for "mornings only" and the like.
+   When the other person is in another time zone, pass `other_time_zone` (and `other_hours` if their day is
+   not 09:00–18:00): only times inside both working days remain. For options to paste in a message, pass
+   `format: "text"` and use its `text`.
 2. If nothing fits, widen once (a longer range, or outside working hours) and say what you relaxed.
 3. Prefer slots that keep the day in one piece: next to existing meetings rather than in the middle of a
    long free block, unless the user wants a long block (then the reverse).
@@ -38,7 +41,9 @@ Pin down, asking only for what is missing and cannot be guessed:
 
 - Never create or move anything before the user chose an option.
 - EventKit cannot invite people: create the event for the user only, and tell them to invite others from
-  Calendar (`open_in_calendar` with the new id).
+  Calendar (`open_in_calendar` with the new id), or send the invitation by email (the
+  `calendar-invite-by-mail` skill).
+- Several events at once (a series of sessions, a trip): `create_events`; moving several: `update_events`.
 - Changing an event other people are invited to may notify them; the app asks the user first. Mention it.
 - Use the user's time zone unless they name another; then pass `time_zone`.
 

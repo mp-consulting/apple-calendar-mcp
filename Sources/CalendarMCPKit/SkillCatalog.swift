@@ -38,6 +38,7 @@ public enum SkillCatalog {
         "calendar-time-audit": "Where your time goes: meetings, people, patterns over months.",
         "calendar-cleanup": "Conflicts, duplicates and stale events, fixed in previewed batches.",
         "calendar-invite-import": "Adds events from .ics invitations and booking confirmations.",
+        "calendar-invite-by-mail": "Invites people by email with an .ics they can accept or decline.",
     ]
 
     public static let all: [CalendarSkill] = embedded.compactMap { folder, content in

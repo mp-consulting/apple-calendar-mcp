@@ -14,8 +14,9 @@ description: Clean up Apple Calendar safely. Use when the user wants to fix conf
 
 - **Conflicts**: `find_conflicts` for the next 4 weeks. For each pair, suggest which to move and where
   (`find_free_time`), without moving anything yet.
-- **Duplicates**: `list_events` for the period; group events with the same title and start (often one per
-  account, after an import or a sync problem). Keep the one in the calendar the user uses; the other goes.
+- **Duplicates**: `find_duplicates` for the period. Each group names the copy to keep and the copies to
+  remove; `delete_ids` holds those that can go safely (a copy in a read-only calendar, or a meeting others are
+  invited to, is never in it). A repeating duplicate is reported once: delete it with `span: "future"`.
 - **Matching events**: `search_events` with `query`, `calendar`, `start` and `end` for what the user
   describes ("all the test events", "the old team standup").
 - **Stale series**: `search_events` with `recurring: true` over the coming months; repeating meetings whose
@@ -25,10 +26,11 @@ description: Clean up Apple Calendar safely. Use when the user wants to fix conf
 
 1. Show the candidates as a table: when, title, calendar, why. Ask the user to confirm the list.
 2. Preview the change with `delete_event` (`ids`, `dry_run: true`), or `update_event` with `dry_run: true`.
-3. Delete or move in batches of at most 20. Deleting asks for the user's OK in the Apple Calendar MCP app by
-   default; tell the user to look for it.
-4. Report what was done and remind the user that `undo_change` can put any of it back (a deleted event
-   comes back without its attendees).
+3. Delete in batches of at most 20 (`delete_event` takes several `ids`); move several events at once with
+   `update_events` (`changes`). Each call asks for the user's OK once in the Apple Calendar MCP app; tell the
+   user to look for it.
+4. Report what was done and remind the user that the call's `undo_id` puts the whole batch back with
+   `undo_change` (a deleted event comes back without its attendees).
 
 ## Rules
 
@@ -66,11 +68,13 @@ reads come from EventKit through the menu bar app and never change anything.
      (a document to read, a decision to make, travel time);
    - **conflicts** (`conflicts`): the two events and how long they overlap;
    - **free time** (`free`): the longest gaps, rounded to the quarter hour;
-   - **invitations to answer** (`pending_invitations`): title, organizer, when.
+   - **invitations to answer** (`pending_invitations`): title, organizer, when;
+   - **reminders due** (`reminders_due`, when the user gave Reminders access): overdue ones first.
 4. **Offer actions**, then wait for the user to choose:
    - move or shorten an event (`update_event`), block focus time in a gap (the `calendar-focus-time` skill),
    - prepare a meeting (the `calendar-meeting-prep` skill),
    - answer an invitation (`respond_to_invitation`: accepted, declined or tentative),
+   - tick off a reminder (`update_reminder` with `completed: true`) or add one (`create_reminder`),
    - open something in Calendar (`open_in_calendar`).
 
 ## Rules
@@ -105,16 +109,55 @@ description: Protect focus time in Apple Calendar. Use when the user wants deep-
 3. **Plan the blocks**: spread them over different days, at most one or two per day, never splitting a free
    stretch into pieces too short to use. Leave lunch free (12:00–13:30 unless the user's day says otherwise).
 4. **Show the plan** as a list (day, start–end, title) and the hours it adds up to. Wait for a yes, or adjust.
-5. **Add** each block with `create_event`: `availability: "busy"`, `alarms: [5]`, the agreed title, and
-   `notes` with what to work on if the user said. For a weekly habit use `repeat` (`frequency: "weekly"`,
-   `weekdays`) instead of separate events.
-6. Report what was added. `undo_change` removes any of them.
+5. **Add** all the blocks in one `create_events` call (`events`, each with `availability: "busy"`,
+   `alarms: [5]`, the agreed title, and `notes` with what to work on if the user said). For a weekly habit use
+   one `create_event` with `repeat` (`frequency: "weekly"`, `weekdays`) instead of separate events.
+6. Report what was added. The `undo_id` it returns removes all of them with `undo_change`.
 
 ## Rules
 
 - Add nothing before the user approves the plan.
 - Do not move other people's meetings to make room; suggest it and let the user decide.
 - Respect existing focus blocks (search them with `search_events`, `query: "focus"`) instead of adding more.
+
+<!-- Installed by Apple Calendar MCP (https://github.com/mp-consulting/apple-calendar-mcp). -->
+
+"""#),
+        ("calendar-invite-by-mail", #"""
+---
+name: calendar-invite-by-mail
+description: Invite people to an Apple Calendar event by email. Use when the user wants to invite someone, send an invitation, share a meeting or event with others, or "send them the calendar invite". Calendar's EventKit cannot invite attendees, so this writes a standard .ics invitation and attaches it to an email draft (with Apple Mail MCP when it is connected), which the user sends.
+---
+
+# Invite by email
+
+EventKit (what Apple Calendar MCP uses) cannot add attendees to an event. An email with an `.ics` invitation
+works with every calendar: the people invited see Accept and Decline, and their answers come back to the user
+by email. The event stays in the user's calendar without the attendees listed.
+
+## Steps
+
+1. **The event.** Find it (`search_events`, or `agenda`), or create it first (the `calendar-scheduler` skill).
+   For a time that suits people in other time zones, use `find_free_time` with `other_time_zone`.
+2. **Who and from whom.** Ask for the email addresses to invite, and the user's own address (the organizer,
+   where the answers go) unless you know it.
+3. **Write the invitation.** `export_events` with `ids` (the event's id), a `path` ending in `.ics` in a
+   folder the user can find (Downloads by default), and `invite` with `organizer`, `organizer_name` and
+   `attendees`. It returns the path.
+4. **The email.** If Apple Mail MCP is connected, call its `compose_email` with the attendees in `to`, a short
+   subject ("Invitation: <title>, <day> <time>"), a two-line body (what, when, where or the video link), and
+   the `.ics` path in `attachments`. Leave it as a draft and tell the user to review and send it. Without Apple
+   Mail MCP, give the path and the text so the user can attach it themselves.
+5. **Answers** come back as emails ("Accepted: …"). With Apple Mail MCP, `search_messages` for the title finds
+   them later.
+
+## Rules
+
+- Never send the email yourself: save a draft, and the user sends it.
+- Invite only the addresses the user gave.
+- Changing the event later does not update the people invited: send them a new invitation (the same steps,
+  so the same event updates in their calendars).
+- For a meeting someone else organized, do not send invitations: answer it with `respond_to_invitation`.
 
 <!-- Installed by Apple Calendar MCP (https://github.com/mp-consulting/apple-calendar-mcp). -->
 
@@ -214,6 +257,9 @@ Pin down, asking only for what is missing and cannot be guessed:
 1. Call `find_free_time` with `start`, `end`, `duration_minutes`, and `buffer_minutes` (10 by default, 30 if
    travel is involved). Leave `work_hours_only` on unless the user wants evenings or weekends. Use
    `earliest` and `latest` (`HH:MM`) for "mornings only" and the like.
+   When the other person is in another time zone, pass `other_time_zone` (and `other_hours` if their day is
+   not 09:00–18:00): only times inside both working days remain. For options to paste in a message, pass
+   `format: "text"` and use its `text`.
 2. If nothing fits, widen once (a longer range, or outside working hours) and say what you relaxed.
 3. Prefer slots that keep the day in one piece: next to existing meetings rather than in the middle of a
    long free block, unless the user wants a long block (then the reverse).
@@ -234,7 +280,9 @@ Pin down, asking only for what is missing and cannot be guessed:
 
 - Never create or move anything before the user chose an option.
 - EventKit cannot invite people: create the event for the user only, and tell them to invite others from
-  Calendar (`open_in_calendar` with the new id).
+  Calendar (`open_in_calendar` with the new id), or send the invitation by email (the
+  `calendar-invite-by-mail` skill).
+- Several events at once (a series of sessions, a trip): `create_events`; moving several: `update_events`.
 - Changing an event other people are invited to may notify them; the app asks the user first. Mention it.
 - Use the user's time zone unless they name another; then pass `time_zone`.
 

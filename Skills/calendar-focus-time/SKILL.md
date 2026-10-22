@@ -16,10 +16,10 @@ description: Protect focus time in Apple Calendar. Use when the user wants deep-
 3. **Plan the blocks**: spread them over different days, at most one or two per day, never splitting a free
    stretch into pieces too short to use. Leave lunch free (12:00–13:30 unless the user's day says otherwise).
 4. **Show the plan** as a list (day, start–end, title) and the hours it adds up to. Wait for a yes, or adjust.
-5. **Add** each block with `create_event`: `availability: "busy"`, `alarms: [5]`, the agreed title, and
-   `notes` with what to work on if the user said. For a weekly habit use `repeat` (`frequency: "weekly"`,
-   `weekdays`) instead of separate events.
-6. Report what was added. `undo_change` removes any of them.
+5. **Add** all the blocks in one `create_events` call (`events`, each with `availability: "busy"`,
+   `alarms: [5]`, the agreed title, and `notes` with what to work on if the user said). For a weekly habit use
+   one `create_event` with `repeat` (`frequency: "weekly"`, `weekdays`) instead of separate events.
+6. Report what was added. The `undo_id` it returns removes all of them with `undo_change`.
 
 ## Rules
 

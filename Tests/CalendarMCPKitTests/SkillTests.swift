@@ -30,7 +30,9 @@ import Testing
             }
         }
         // Keys of tool results that skills point at.
-        known.formUnion(["conflicts", "free", "pending_invitations", "undo_id", "undo_ids", "change_id"])
+        known.formUnion(["conflicts", "free", "pending_invitations", "reminders_due", "undo_id", "undo_ids", "change_id", "delete_ids"])
+        // Apple Mail MCP's tools, for skills that hand an email to it when it is connected.
+        known.formUnion(["compose_email", "search_messages", "get_message"])
         let pattern = /`([a-z]+(?:_[a-z]+)+)`/
         for skill in SkillCatalog.all {
             for match in skill.content.matches(of: pattern) {
