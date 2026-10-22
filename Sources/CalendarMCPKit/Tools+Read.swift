@@ -4,7 +4,7 @@ import MCP
 
 extension CalendarToolbox {
     var readTools: [ToolDefinition] {
-        [listCalendars, listEvents, searchEvents, getEvent, agenda, findFreeTime, findConflicts, pendingInvitations, statistics]
+        [listCalendars, listEvents, searchEvents, getEvent, agenda, findFreeTime, findConflicts, findDuplicates, pendingInvitations, statistics]
     }
 
     static let calendarsProperty = Schema.strings("Calendars by id, title, or Account/Title (default: all, except those hidden in settings)")
@@ -352,6 +352,60 @@ extension CalendarToolbox {
             let (start, end) = try self.period(arguments, defaultStart: self.startOfToday, defaultLength: 14 * 86_400)
             let pairs = Conflicts.find(try self.events(from: start, to: end, calendarIDs: self.calendarIDs(arguments)))
             return ToolReply(json: .obj([("conflicts", .array(pairs.map(Self.conflict)))]), summary: plural(pairs.count, "conflict"))
+        }
+    }
+
+    // MARK: find_duplicates
+
+    var findDuplicates: ToolDefinition {
+        ToolDefinition(
+            "find_duplicates", "Find duplicates",
+            """
+            Events entered more than once (same title, start and end, in one calendar or several: an invitation \
+            imported twice, a subscription copied by hand, a sync gone wrong). For each, the copy to keep and the \
+            copies to remove; delete_ids lists those that can be deleted safely (not read-only, and not a meeting \
+            others are invited to). Repeating duplicates are reported once: delete them with span future. \
+            Default: today to 90 days ahead.
+            """,
+            Schema.object([
+                "start": Schema.string("From: \(Schema.date) (default: today)"),
+                "end": Schema.string("Until (default: 90 days after start)"),
+                "calendars": Self.calendarsProperty,
+                "limit": Schema.integer("Most groups to return (default 50)", minimum: 1, maximum: 500),
+                "time_zone": Self.zoneProperty,
+            ]), kind: .read
+        ) { arguments in
+            let (start, end) = try self.period(arguments, defaultStart: self.startOfToday, defaultLength: 90 * 86_400)
+            let writable = Set(try self.visibleCalendars().filter(\.writable).map(\.id))
+            let events = try self.events(from: start, to: end, calendarIDs: self.calendarIDs(arguments))
+            let groups = Duplicates.find(events) { writable.contains($0.calendarID) }
+            let limit = try arguments.int("limit", default: 50, in: 1...500)
+            var deleteIDs: [String] = []
+            func copy(_ event: Event) -> JSON {
+                let safe = writable.contains(event.calendarID) && !event.hasOtherAttendees
+                if safe { deleteIDs.append(event.id) }
+                return .obj([
+                    ("id", .string(event.id)), ("calendar", .string(event.calendarTitle)),
+                    ("deletable", safe ? nil : .bool(false)),
+                    ("why_not", safe ? nil : .string(event.hasOtherAttendees ? "others are invited: deleting may tell them" : "read-only calendar")),
+                ])
+            }
+            let rows = groups.prefix(limit).map { group -> JSON in
+                .obj([
+                    ("title", .string(group.keep.title)),
+                ] + Render.times(group.keep) + [
+                    ("recurring", group.keep.isRecurring ? .bool(true) : nil),
+                    ("occurrences", group.occurrences > 1 ? .int(Int64(group.occurrences)) : nil),
+                    ("keep", .obj([("id", .string(group.keep.id)), ("calendar", .string(group.keep.calendarTitle))])),
+                    ("remove", .array(group.copies.map(copy))),
+                ])
+            }
+            return ToolReply(
+                json: .obj([
+                    ("groups", .array(rows)), ("more", groups.count > limit ? .int(Int64(groups.count - limit)) : nil),
+                    ("delete_ids", .array(deleteIDs.map(JSON.string))),
+                ]),
+                summary: plural(groups.count, "duplicate group"))
         }
     }
 

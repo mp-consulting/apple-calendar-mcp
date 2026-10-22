@@ -305,3 +305,59 @@ extension FreeTime {
         return lines.joined(separator: "\n")
     }
 }
+
+/// The same event entered more than once: same title (ignoring case, accents and spacing), start, end and all-day.
+public enum Duplicates {
+    public struct Group: Sendable {
+        /// The copy to keep: one that cannot be deleted when there is one, else the most complete, oldest copy.
+        public var keep: Event
+        public var copies: [Event]
+        /// How many occurrences the group stands for (repeating duplicates are reported once).
+        public var occurrences: Int
+    }
+
+    public static func find(_ events: [Event], deletable: (Event) -> Bool) -> [Group] {
+        func key(_ event: Event) -> String {
+            let title = event.title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+                .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            return "\(title)|\(event.start.timeIntervalSince1970)|\(event.end.timeIntervalSince1970)|\(event.isAllDay)"
+        }
+        var byKey: [String: [Event]] = [:]
+        var order: [String] = []
+        for event in events where event.status != .cancelled {
+            let k = key(event)
+            if byKey[k] == nil { order.append(k) }
+            byKey[k, default: []].append(event)
+        }
+        var groups: [Group] = []
+        var seenSeries: [Set<String>: Int] = [:]
+        for k in order {
+            // One copy per event: occurrences of one series never duplicate each other.
+            var copies: [Event] = []
+            var ids = Set<String>()
+            for event in byKey[k]! where ids.insert(event.eventID).inserted { copies.append(event) }
+            guard copies.count > 1 else { continue }
+            if copies.allSatisfy(\.isRecurring), let index = seenSeries[ids] {
+                groups[index].occurrences += 1
+                continue
+            }
+            let keep = copies.first { !deletable($0) } ?? copies.max { score($0) < score($1) }!
+            groups.append(Group(keep: keep, copies: copies.filter { $0.eventID != keep.eventID }, occurrences: 1))
+            if copies.allSatisfy(\.isRecurring) { seenSeries[ids] = groups.count - 1 }
+        }
+        return groups
+    }
+
+    /// More is better: an invitation with people, then details, then the oldest.
+    static func score(_ event: Event) -> Double {
+        var score = 0.0
+        if !event.attendees.isEmpty { score += 1000 }
+        if event.location != nil { score += 10 }
+        if event.notes?.isEmpty == false { score += 10 }
+        if event.url != nil { score += 10 }
+        score += Double(event.alarms.count)
+        // Older copies first: the newer one is usually the accidental one.
+        if let created = event.created { score -= created.timeIntervalSince1970 / 1e10 }
+        return score
+    }
+}

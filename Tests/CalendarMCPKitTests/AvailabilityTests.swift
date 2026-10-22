@@ -77,3 +77,52 @@ import Testing
         ]).contains("not an email address"))
     }
 }
+
+@Suite struct DuplicateTests {
+    @Test func findsCopiesAndKeepsTheRightOne() async throws {
+        let harness = try Harness()
+        let thursday = try harness.backend.events(in: day(23), day(24))
+        let dentist = try #require(thursday.first { $0.title == "Dentist" })
+        let holiday = try #require(thursday.first { $0.title == "Founders' Day" })
+        let retro = try #require(thursday.first { $0.title == "Sprint retro" })
+        var copy = dentist
+        copy.eventID = "COPY-1"
+        copy.title = "dentist "
+        copy.location = nil
+        copy.created = now
+        harness.backend.add(copy)
+        var personalHoliday = holiday
+        personalHoliday.eventID = "COPY-2"
+        personalHoliday.calendarID = StandardFixture.personal.id
+        personalHoliday.calendarTitle = "Personal"
+        harness.backend.add(personalHoliday)
+        var retroCopy = retro
+        retroCopy.eventID = "COPY-3"
+        retroCopy.calendarID = StandardFixture.family.id
+        retroCopy.calendarTitle = "Family"
+        harness.backend.add(retroCopy)
+
+        let result = try await harness.call("find_duplicates", ["start": "2026-10-19", "end": "2026-10-25"])
+        let groups = result["groups"] as? [[String: Any]] ?? []
+        #expect(groups.count == 3)
+        func group(_ title: String) -> [String: Any]? { groups.first { $0["title"] as? String == title } }
+        #expect((group("Dentist")?["keep"] as? [String: Any])?["id"] as? String == dentist.id)
+        #expect((group("Founders' Day")?["keep"] as? [String: Any])?["calendar"] as? String == "Holidays")
+        let retroRemove = (group("Sprint retro")?["remove"] as? [[String: Any]])?.first
+        #expect(retroRemove?["deletable"] as? Bool == false)
+        #expect(Set(result["delete_ids"] as? [String] ?? []) == ["COPY-1", "COPY-2"])
+    }
+
+    @Test func aRepeatingDuplicateIsReportedOnce() async throws {
+        let harness = try Harness()
+        let swim = try #require(try harness.backend.events(in: day(22), day(23)).first { $0.title == "Swimming lessons" })
+        var copy = try #require(try harness.backend.event(EventRef(eventID: swim.eventID)))
+        copy.eventID = "COPY-SWIM"
+        copy.occurrenceDate = nil
+        harness.backend.add(copy)
+        let result = try await harness.call("find_duplicates", ["start": "2026-10-19", "end": "2026-11-15"])
+        let groups = result["groups"] as? [[String: Any]] ?? []
+        #expect(groups.count == 1)
+        #expect((groups.first?["occurrences"] as? Int ?? 0) >= 3)
+    }
+}
