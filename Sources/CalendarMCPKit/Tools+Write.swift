@@ -20,6 +20,8 @@ extension CalendarToolbox {
         "additionalProperties": false,
     ])
 
+    static let spanProperty = Schema.string("For a repeating event: this occurrence only (default) or it and all later ones", enum: ["this", "future"])
+
     static let changeProperties: [String: Value] = [
         "title": Schema.string("Title"),
         "start": Schema.string("Start: \(Schema.date). A day alone (YYYY-MM-DD) makes an all-day event"),
@@ -74,7 +76,7 @@ extension CalendarToolbox {
         if let name = try arguments.string("calendar") {
             calendar = try resolveCalendar(name, in: visible)
         } else {
-            guard let preferred = visible.first(where: { $0.isDefault && $0.writable }) ?? visible.first(where: \.writable) else {
+            guard let preferred = visible.defaultWritable else {
                 throw ToolError("No calendar can take new events; pass calendar (see list_calendars).")
             }
             calendar = preferred
@@ -115,7 +117,7 @@ extension CalendarToolbox {
     static func describe(_ before: Event, _ after: Event) -> String {
         var parts: [String] = []
         if before.start != after.start || before.end != after.end || before.isAllDay != after.isAllDay {
-            parts.append("moves to " + (Render.line(after).components(separatedBy: " · ").first ?? ""))
+            parts.append("moves to " + (after.summaryLine.components(separatedBy: " · ").first ?? ""))
         }
         if before.title != after.title { parts.append("title: \(after.title)") }
         if before.location != after.location { parts.append(after.location.map { "location: \($0)" } ?? "no location") }
@@ -139,25 +141,20 @@ extension CalendarToolbox {
 
     var createEvent: ToolDefinition {
         ToolDefinition(
-            tool: Self.tool(
-                "create_event", "Create event",
-                """
-                Add an event. A start without a time (YYYY-MM-DD) makes an all-day event; a timed event lasts \
-                duration_minutes (default 60) unless end is given. Goes to the default calendar unless calendar is \
-                given. EventKit cannot invite attendees: create it for the user, who can invite people in Calendar.
-                """,
-                Schema.object(Self.changeProperties, required: ["title", "start"]), kind: .change),
-            kind: .change
+            "create_event", "Create event",
+            """
+            Add an event. A start without a time (YYYY-MM-DD) makes an all-day event; a timed event lasts \
+            duration_minutes (default 60) unless end is given. Goes to the default calendar unless calendar is \
+            given. EventKit cannot invite attendees: create it for the user, who can invite people in Calendar.
+            """,
+            Schema.object(Self.changeProperties, required: ["title", "start"]), kind: .change
         ) { arguments in
-            try self.requireChanges()
             let title = try arguments.requiredString("title")
             let calendar = try self.targetCalendar(arguments)
-            var (start, end, allDay) = try self.times(arguments, current: nil)
-            guard let begin = start else { throw ToolError("start is required") }
-            if end == nil { end = begin.addingTimeInterval(3600) }
-            start = begin
+            let (startArgument, endArgument, allDay) = try self.times(arguments, current: nil)
+            guard let start = startArgument else { throw ToolError("start is required") }
             let draft = EventDraft(
-                title: title, start: begin, end: end!, isAllDay: allDay ?? false, calendarID: calendar.id,
+                title: title, start: start, end: endArgument ?? start.addingTimeInterval(3600), isAllDay: allDay ?? false, calendarID: calendar.id,
                 timeZone: try arguments.string("time_zone"), location: try arguments.string("location"),
                 notes: try arguments.string("notes"), url: try arguments.string("url"), availability: try self.availability(arguments),
                 alarms: try self.alarms(arguments) ?? [], recurrence: try self.recurrence(arguments))
@@ -175,7 +172,7 @@ extension CalendarToolbox {
             let record = ChangeRecord(tool: "create_event", kind: .created, before: nil, after: created)
             self.record([record])
             return ToolReply(
-                json: .obj([("created", Render.detail(created, notesLimit: 4000)), ("undo_id", self.journal == nil ? nil : .string(record.id.uuidString))]),
+                json: .obj([("created", Render.detail(created, notesLimit: 4000)), ("undo_id", self.undoID(record))]),
                 summary: "created 1 event", event: created)
         }
     }
@@ -185,20 +182,17 @@ extension CalendarToolbox {
     var updateEvent: ToolDefinition {
         var properties = Self.changeProperties
         properties["id"] = Schema.string("The event id; for one occurrence of a repeating event, its occurrence id")
-        properties["span"] = Schema.string("For a repeating event: this occurrence only (default) or it and all later ones", enum: ["this", "future"])
+        properties["span"] = Self.spanProperty
         properties["remove_repeat"] = Schema.boolean("Stop the event repeating (with span future)")
         return ToolDefinition(
-            tool: Self.tool(
-                "update_event", "Update event",
-                """
-                Change or move an event: only the fields given change, and a new start keeps the length unless end or \
-                duration_minutes is given. For a repeating event, span "this" changes one occurrence and "future" it \
-                and every later one. Changing an event other people are invited to may notify them and asks the user first.
-                """,
-                Schema.object(properties, required: ["id"]), kind: .change, idempotent: true),
-            kind: .change
+            "update_event", "Update event",
+            """
+            Change or move an event: only the fields given change, and a new start keeps the length unless end or \
+            duration_minutes is given. For a repeating event, span "this" changes one occurrence and "future" it \
+            and every later one. Changing an event other people are invited to may notify them and asks the user first.
+            """,
+            Schema.object(properties, required: ["id"]), kind: .change, idempotent: true
         ) { arguments in
-            try self.requireChanges()
             let ref = try arguments.ref("id")
             let span = try Self.span(arguments)
             let current = try self.event(ref)
@@ -208,16 +202,20 @@ extension CalendarToolbox {
                 location: try arguments.clearableString("location"), notes: try arguments.clearableString("notes"),
                 url: try arguments.clearableString("url"), availability: try self.availability(arguments), alarms: try self.alarms(arguments),
                 recurrence: try self.recurrence(arguments), removeRecurrence: try arguments.bool("remove_repeat") ?? false)
+            var targetTitle: String?
             if arguments.has("calendar") {
                 let target = try self.targetCalendar(arguments)
-                if target.id != current.calendarID { change.calendarID = target.id }
+                if target.id != current.calendarID {
+                    change.calendarID = target.id
+                    targetTitle = target.title
+                }
             }
             guard !change.isEmpty else { throw ToolError("Nothing to change: pass at least one field (title, start, end, location, …)") }
             if (change.recurrence != nil || change.removeRecurrence) && span == .thisEvent && current.isRecurring {
                 throw ToolError("A repeat rule changes the series: pass span \"future\".")
             }
             var preview = change.applied(to: current)
-            if let id = change.calendarID, let target = try? self.resolveCalendar(id) { preview.calendarTitle = target.title }
+            if let targetTitle { preview.calendarTitle = targetTitle }
             let description = Self.describe(current, preview)
             if try arguments.bool("dry_run") == true {
                 return ToolReply(
@@ -235,7 +233,7 @@ extension CalendarToolbox {
                 json: .obj([
                     ("updated", Render.detail(updated, notesLimit: 4000)), ("changed", .string(description)),
                     ("span", current.isRecurring ? .string(span.rawValue) : nil),
-                    ("undo_id", self.journal == nil ? nil : .string(record.id.uuidString)),
+                    ("undo_id", self.undoID(record)),
                 ]),
                 summary: "updated 1 event", event: updated)
         }
@@ -245,21 +243,18 @@ extension CalendarToolbox {
 
     var deleteEvent: ToolDefinition {
         ToolDefinition(
-            tool: Self.tool(
-                "delete_event", "Delete events",
-                """
-                Delete events (Calendar has no Trash). By default the user approves each deletion in the menu bar app; \
-                undo_change brings an event back, without its attendees. For a repeating event, span "this" deletes one \
-                occurrence and "future" it and every later one. Use dry_run to preview.
-                """,
-                Schema.object([
-                    "ids": Schema.ids("Event ids (occurrence ids for single occurrences)"),
-                    "span": Schema.string("For repeating events: this occurrence only (default) or it and all later ones", enum: ["this", "future"]),
-                    "dry_run": Schema.boolean("List what would be deleted without deleting"),
-                ], required: ["ids"]), kind: .change, destructive: true),
-            kind: .change
+            "delete_event", "Delete events",
+            """
+            Delete events (Calendar has no Trash). By default the user approves each deletion in the menu bar app; \
+            undo_change brings an event back, without its attendees. For a repeating event, span "this" deletes one \
+            occurrence and "future" it and every later one. Use dry_run to preview.
+            """,
+            Schema.object([
+                "ids": Schema.ids("Event ids (occurrence ids for single occurrences)"),
+                "span": Self.spanProperty,
+                "dry_run": Schema.boolean("List what would be deleted without deleting"),
+            ], required: ["ids"]), kind: .change, destructive: true
         ) { arguments in
-            try self.requireChanges()
             var refs = try arguments.refs("ids")
             if refs.isEmpty, arguments.has("id") { refs = try arguments.refs("id") }
             guard !refs.isEmpty else { throw ToolError("ids is required") }
@@ -276,7 +271,7 @@ extension CalendarToolbox {
                         ("dry_run", .bool(true)), ("would_delete", .array(events.map(Render.event))),
                         ("asks_first", self.settings.current.deletePolicy == .confirm ? .bool(true) : nil),
                     ]),
-                    summary: "dry run: \(Self.plural(events.count, "event"))")
+                    summary: "dry run: \(plural(events.count, "event"))")
             }
             try await self.authorize(tool: "delete_event", deleting: true, events: events, detail: span == .futureEvents ? "Repeating events: this and every later occurrence." : nil)
             var deleted: [Event] = []
@@ -297,9 +292,9 @@ extension CalendarToolbox {
                 json: .obj([
                     ("deleted", .array(deleted.map(Render.event))),
                     ("failed", failures.isEmpty ? nil : .array(failures)),
-                    ("undo_ids", records.isEmpty || self.journal == nil ? nil : .array(records.map { .string($0.id.uuidString) })),
+                    ("undo_ids", self.undoIDs(records)),
                 ]),
-                summary: "deleted \(Self.plural(deleted.count, "event"))\(failures.isEmpty ? "" : ", \(failures.count) failed")")
+                summary: "deleted \(plural(deleted.count, "event"))\(failures.isEmpty ? "" : ", \(failures.count) failed")")
         }
     }
 
@@ -307,24 +302,21 @@ extension CalendarToolbox {
 
     var respondToInvitation: ToolDefinition {
         ToolDefinition(
-            tool: Self.tool(
-                "respond_to_invitation", "Answer invitation",
-                """
-                Accept, decline or answer "maybe" (tentative) to an invitation, as the user would in Calendar: Calendar \
-                sends the answer to the organizer. Asks the user first by default. Some repeating invitations can only be \
-                answered for the whole series. dry_run says whether the invitation can be answered here; when it cannot, \
-                offer open_in_calendar.
-                """,
-                Schema.object([
-                    "id": Schema.string("The event id (from pending_invitations); for one occurrence, its occurrence id"),
-                    "answer": Schema.string("The answer", enum: ["accepted", "declined", "tentative"]),
-                    "comment": Schema.string("A short note to the organizer, where the account supports one"),
-                    "span": Schema.string("For a repeating event: this occurrence only (default) or it and all later ones", enum: ["this", "future"]),
-                    "dry_run": Schema.boolean("Check whether it can be answered, without answering"),
-                ], required: ["id", "answer"]), kind: .change, idempotent: true),
-            kind: .change
+            "respond_to_invitation", "Answer invitation",
+            """
+            Accept, decline or answer "maybe" (tentative) to an invitation, as the user would in Calendar: Calendar \
+            sends the answer to the organizer. Asks the user first by default. Some repeating invitations can only be \
+            answered for the whole series. dry_run says whether the invitation can be answered here; when it cannot, \
+            offer open_in_calendar.
+            """,
+            Schema.object([
+                "id": Schema.string("The event id (from pending_invitations); for one occurrence, its occurrence id"),
+                "answer": Schema.string("The answer", enum: ["accepted", "declined", "tentative"]),
+                "comment": Schema.string("A short note to the organizer, where the account supports one"),
+                "span": Self.spanProperty,
+                "dry_run": Schema.boolean("Check whether it can be answered, without answering"),
+            ], required: ["id", "answer"]), kind: .change, idempotent: true
         ) { arguments in
-            try self.requireChanges()
             let ref = try arguments.ref("id")
             guard let status = Participant.Status(rawValue: try arguments.requiredString("answer").lowercased()),
                   [.accepted, .declined, .tentative].contains(status)
@@ -334,7 +326,7 @@ extension CalendarToolbox {
                 throw ToolError("\"\(current.title)\" is not an invitation from someone else; there is nothing to answer.")
             }
             let answer = InvitationAnswer(status: status, comment: try arguments.string("comment"), span: try Self.span(arguments))
-            let check = try self.backend.respond(ref, InvitationAnswer(status: status, span: answer.span, dryRun: true)).check
+            let check = try self.backend.invitationCheck(ref)
             let checkJSON = JSON.obj([
                 ("can_answer", .bool(check.answerable)), ("whole_series", check.appliesToAll == true && current.isRecurring ? .bool(true) : nil),
                 ("comment_supported", check.allowsComment.map(JSON.bool)),
@@ -351,12 +343,10 @@ extension CalendarToolbox {
             let organizer = current.organizer?.formatted ?? "the organizer"
             try await self.authorize(
                 tool: "respond_to_invitation", deleting: false, events: [current], detail: "Answers \(status.rawValue) to \(organizer).")
-            let result = try self.backend.respond(ref, answer)
+            let answered = try self.backend.respond(ref, answer)
             return ToolReply(
-                json: .obj([
-                    ("answered", Render.event(result.event)), ("answer", .string(status.rawValue)), ("check", checkJSON),
-                ]),
-                summary: "answered 1 invitation", event: result.event)
+                json: .obj([("answered", Render.event(answered)), ("answer", .string(status.rawValue)), ("check", checkJSON)]),
+                summary: "answered 1 invitation", event: answered)
         }
     }
 

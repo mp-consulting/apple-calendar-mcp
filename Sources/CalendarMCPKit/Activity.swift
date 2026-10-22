@@ -51,17 +51,8 @@ public final class ActivityLog: @unchecked Sendable {
         self.maxBytes = maxBytes
     }
 
-    private static let encoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }()
-
-    private static let decoder: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }()
+    private static let encoder = ISOCoding.encoder
+    private static let decoder = ISOCoding.decoder
 
     /// Written in the background, in order, so a tool's reply does not wait for the disk. `recent`, `stamp` and
     /// `flush` see every entry appended before them.

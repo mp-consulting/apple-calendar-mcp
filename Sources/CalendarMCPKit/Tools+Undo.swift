@@ -7,18 +7,16 @@ extension CalendarToolbox {
 
     var undoChange: ToolDefinition {
         ToolDefinition(
-            tool: Self.tool(
-                "undo_change", "Undo a change",
-                """
-                Without change_id: the recent changes made through this server (newest first), with their ids. With \
-                change_id: puts that change back: a created event is deleted, a changed one gets its previous fields \
-                back, a deleted one is created again (without its attendees: EventKit cannot invite them).
-                """,
-                Schema.object([
-                    "change_id": Schema.string("The change to undo (from this list, or the undo_id a change returned)"),
-                    "limit": Schema.integer("How many recent changes to list (default 10)", minimum: 1, maximum: 100),
-                ]), kind: .change),
-            kind: .change
+            "undo_change", "Undo a change",
+            """
+            Without change_id: the recent changes made through this server (newest first), with their ids. With \
+            change_id: puts that change back: a created event is deleted, a changed one gets its previous fields \
+            back, a deleted one is created again (without its attendees: EventKit cannot invite them).
+            """,
+            Schema.object([
+                "change_id": Schema.string("The change to undo (from this list, or the undo_id a change returned)"),
+                "limit": Schema.integer("How many recent changes to list (default 10)", minimum: 1, maximum: 100),
+            ]), kind: .change, guardsChanges: false
         ) { arguments in
             guard let journal = self.journal else { throw ToolError("Undo is off.") }
             guard let text = try arguments.string("change_id") else {
@@ -28,11 +26,11 @@ extension CalendarToolbox {
                     json: .obj([("changes", .array(recent.map { record in
                         .obj([
                             ("change_id", .string(record.id.uuidString)), ("date", Render.date(record.date)), ("tool", .string(record.tool)),
-                            ("kind", .string(record.kind.rawValue)), ("event", record.event.map { .string(Render.line($0)) }),
+                            ("kind", .string(record.kind.rawValue)), ("event", record.event.map { .string($0.summaryLine) }),
                             ("span", record.span == .futureEvents ? .string("future") : nil),
                         ])
                     }))]),
-                    summary: Self.plural(recent.count, "change"))
+                    summary: plural(recent.count, "change"))
             }
             try self.requireChanges()
             guard let id = UUID(uuidString: text.trimmingCharacters(in: .whitespaces)),
@@ -55,7 +53,7 @@ extension CalendarToolbox {
                 reply = ToolReply(json: .obj([("undone", .string("created")), ("deleted", Render.event(current))]), summary: "deleted the event it created")
             case .updated:
                 guard let before = record.before, let after = record.after else { throw ToolError("The journal entry is incomplete.") }
-                let ref = after.isRecurring && record.span == .thisEvent ? (after.occurrenceDate.map { EventRef(eventID: after.eventID, occurrence: $0) } ?? after.ref) : after.ref
+                let ref = after.ref
                 let current = try self.event(ref)
                 var change = EventChange(restoring: before)
                 if before.calendarID == current.calendarID { change.calendarID = nil }
@@ -71,7 +69,7 @@ extension CalendarToolbox {
                 var draft = EventDraft(copying: before)
                 let calendars = try self.visibleCalendars()
                 if calendars.first(where: { $0.id == before.calendarID })?.writable != true {
-                    draft.calendarID = calendars.first(where: { $0.isDefault && $0.writable })?.id
+                    draft.calendarID = calendars.defaultWritable?.id
                 }
                 let created = try self.backend.create(draft)
                 journal.append([ChangeRecord(tool: "undo_change", kind: .created, before: nil, after: created)])

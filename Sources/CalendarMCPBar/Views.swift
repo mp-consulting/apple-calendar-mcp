@@ -371,7 +371,7 @@ struct EventRow: View {
     private var subtitle: String {
         var parts: [String] = []
         if VideoLink.find(in: event) != nil { parts.append("Video call") } else if let location = event.location { parts.append(location) }
-        let others = event.attendees.filter { !$0.isCurrentUser && $0.kind == .person }
+        let others = event.otherPeople
         if !others.isEmpty {
             let names = others.prefix(2).map { $0.name?.components(separatedBy: " ").first ?? $0.email ?? "?" }
             parts.append("with " + names.joined(separator: ", ") + (others.count > 2 ? " +\(others.count - 2)" : ""))
@@ -523,7 +523,7 @@ struct ApprovalBlock: View {
                 }
             }
             HStack {
-                if request.kind == .delete || request.tool == "delete_event" {
+                if request.kind == .delete {
                     Text("Calendar has no Trash; undo_change can bring it back.").font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer()

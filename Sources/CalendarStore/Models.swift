@@ -79,6 +79,9 @@ public struct Participant: Codable, Sendable, Hashable {
         case (nil, nil): "(unknown)"
         }
     }
+
+    /// The name, else the address: a short label for counts and lists.
+    public var displayName: String { name ?? email ?? "?" }
 }
 
 /// A reminder before an event (`minutesBefore`), or at a fixed time.
@@ -126,7 +129,7 @@ public struct Recurrence: Codable, Sendable, Hashable {
         self.monthDays = monthDays
     }
 
-    static let weekdayNames = ["", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    public static let weekdayNames = ["", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
     /// "every 2 weeks on Mon, Wed until 2026-12-31".
     public var summary: String {
@@ -211,7 +214,7 @@ public struct Event: Codable, Sendable, Hashable, Identifiable {
     public var id: String { ref.string }
 
     /// What tools call this event (one occurrence when it repeats).
-    public var ref: EventRef { EventRef(eventID: eventID, occurrence: recurrence != nil || isDetached ? occurrenceDate ?? start : nil) }
+    public var ref: EventRef { EventRef(eventID: eventID, occurrence: isRecurring ? occurrenceDate ?? start : nil) }
 
     public var isRecurring: Bool { recurrence != nil || isDetached }
 
@@ -226,10 +229,14 @@ public struct Event: Codable, Sendable, Hashable, Identifiable {
         return attendees.first(where: \.isCurrentUser)?.status
     }
 
-    /// Counts toward busy time: not free, not cancelled, not declined.
-    public var blocksTime: Bool {
-        availability != .free && status != .cancelled && myStatus != .declined
-    }
+    /// The people invited besides the user (no rooms or resources).
+    public var otherPeople: [Participant] { attendees.filter { !$0.isCurrentUser && $0.kind == .person } }
+
+    /// Still on: not cancelled, and not declined by the user.
+    public var isAttended: Bool { status != .cancelled && myStatus != .declined }
+
+    /// Counts toward busy time: attended and not shown as free.
+    public var blocksTime: Bool { availability != .free && isAttended }
 
     public func overlaps(_ start: Date, _ end: Date) -> Bool { self.start < end && self.end > start }
 }
@@ -385,6 +392,32 @@ public enum Span: String, Codable, Sendable {
     case futureEvents = "future"
 }
 
+extension Event {
+    /// Calendar's own link to the event (`open_in_calendar` and the menu bar app open it).
+    public var calendarLink: String {
+        let id = eventID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? eventID
+        return "ical://ekevent/\(id)?method=show&options=more"
+    }
+
+    /// "Tue 21 Oct 14:00–15:00 · Design review · Work", for approvals and summaries.
+    public var summaryLine: String {
+        let when: String
+        if isAllDay {
+            when = start.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)) + " (all day)"
+        } else {
+            let sameDay = Calendar.current.isDate(start, inSameDayAs: end)
+            when = start.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).hour().minute()) + "–"
+                + (sameDay ? end.formatted(.dateTime.hour().minute()) : end.formatted(.dateTime.day().month(.abbreviated).hour().minute()))
+        }
+        return [when, title, calendarTitle].joined(separator: " · ")
+    }
+}
+
+extension [CalendarInfo] {
+    /// Where new events go: the default calendar when it can take them, else the first that can.
+    public var defaultWritable: CalendarInfo? { first { $0.isDefault && $0.writable } ?? first(where: \.writable) }
+}
+
 /// Whether this process can read calendars.
 public enum AccessState: Codable, Sendable, Equatable {
     case granted
@@ -413,19 +446,21 @@ public enum DayFormat {
     }
 }
 
+/// "1 event", "3 events" (or the given plural: "2 matches").
+public func plural(_ count: Int, _ word: String, _ pluralForm: String? = nil) -> String {
+    "\(count) \(count == 1 ? word : pluralForm ?? word + "s")"
+}
+
 /// The user's answer to an invitation.
 public struct InvitationAnswer: Codable, Sendable, Hashable {
     public var status: Participant.Status
     public var comment: String?
     public var span: Span
-    /// Only check what Calendar allows; change nothing.
-    public var dryRun: Bool
 
-    public init(status: Participant.Status, comment: String? = nil, span: Span = .thisEvent, dryRun: Bool = false) {
+    public init(status: Participant.Status, comment: String? = nil, span: Span = .thisEvent) {
         self.status = status
         self.comment = comment
         self.span = span
-        self.dryRun = dryRun
     }
 }
 
@@ -446,16 +481,4 @@ public struct InvitationCheck: Codable, Sendable, Hashable {
     }
 
     public var answerable: Bool { supported && allowsStatusChange != false }
-}
-
-public struct InvitationResult: Codable, Sendable, Hashable {
-    public var event: Event
-    public var check: InvitationCheck
-    public var answered: Bool
-
-    public init(event: Event, check: InvitationCheck, answered: Bool) {
-        self.event = event
-        self.check = check
-        self.answered = answered
-    }
 }

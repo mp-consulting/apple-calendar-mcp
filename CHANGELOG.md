@@ -11,6 +11,12 @@ All notable changes to this project are documented here. The format follows
 - `respond_to_invitation`: accept, decline or answer "maybe" to an invitation (with `dry_run` to check first).
   Calendar sends the answer to the organizer. The menu bar app asks first, as for other changes to shared events.
 
+### Fixed
+
+- Undoing the creation of an event other people are invited to now asks "Delete a shared event?" instead of "Change".
+- The bridge reads large replies (long searches, statistics, exports) in linear time, and link detection in event
+  notes no longer rebuilds its detector for every event.
+
 ## [0.1.3] - 2026-10-22
 
 ### Changed

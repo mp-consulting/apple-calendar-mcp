@@ -74,9 +74,8 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
         try lock.withLock {
             try checkAccess()
             let calendar = try writableCalendar(draft.calendarID)
-            guard draft.end >= draft.start else { throw CalendarError("The end is before the start.") }
-            let id = "MEM-\(nextID)"
-            nextID += 1
+            guard draft.end >= draft.start else { throw CalendarError.endBeforeStart }
+            let id = newID()
             let now = Date()
             let event = Event(
                 eventID: id, externalID: "\(id)@memory", calendarID: calendar.id, calendarTitle: calendar.title, title: draft.title,
@@ -98,7 +97,7 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
             if change.calendarID != nil, target == nil { throw CalendarError("That calendar can't be changed or doesn't exist.") }
             func edit(_ event: Event) throws -> Event {
                 var updated = change.applied(to: event)
-                guard updated.end >= updated.start else { throw CalendarError("The end is before the start.") }
+                guard updated.end >= updated.start else { throw CalendarError.endBeforeStart }
                 if let target {
                     updated.calendarID = target.id
                     updated.calendarTitle = target.title
@@ -139,14 +138,11 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
                 let before = expander.starts(
                     of: oldRule, seriesStart: item.event.start, duration: item.event.duration, from: item.event.start, to: original
                 ).count
-                item.event.recurrence?.until = dayBefore(original)
-                item.event.recurrence?.count = nil
-                item.exceptions = item.exceptions.filter { $0.key < original }
+                end(&item, before: original)
                 series[ref.eventID] = item
                 var tail = current
-                tail.eventID = "MEM-\(nextID)"
+                tail.eventID = newID()
                 tail.externalID = "\(tail.eventID)@memory"
-                nextID += 1
                 tail.isDetached = false
                 tail.occurrenceDate = nil
                 var tailRule = oldRule
@@ -179,9 +175,7 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
                     series[ref.eventID] = nil
                     return
                 }
-                item.event.recurrence?.until = dayBefore(original)
-                item.event.recurrence?.count = nil
-                item.exceptions = item.exceptions.filter { $0.key < original }
+                end(&item, before: original)
             }
             series[ref.eventID] = item
         }
@@ -189,16 +183,21 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
 
     // MARK: Helpers (under the lock)
 
+    public func invitationCheck(_ ref: EventRef) throws -> InvitationCheck {
+        try lock.withLock {
+            try checkAccess()
+            let invited = try occurrence(ref).myStatus != nil
+            return InvitationCheck(supported: true, allowsStatusChange: invited, allowsComment: invited, appliesToAll: true)
+        }
+    }
+
     /// Answers for the whole series (memory events have no per-occurrence answers).
-    public func respond(_ ref: EventRef, _ answer: InvitationAnswer) throws -> InvitationResult {
+    public func respond(_ ref: EventRef, _ answer: InvitationAnswer) throws -> Event {
         try lock.withLock {
             try checkAccess()
             guard var item = series[ref.eventID] else { throw CalendarError.notFound(ref) }
             let current = try occurrence(ref)
-            let invited = current.organizer?.isCurrentUser == false && current.attendees.contains(where: \.isCurrentUser)
-            let check = InvitationCheck(supported: true, allowsStatusChange: invited, allowsComment: invited, appliesToAll: true)
-            guard !answer.dryRun else { return InvitationResult(event: current, check: check, answered: false) }
-            guard invited else { throw CalendarError("\"\(current.title)\" is not an invitation you can answer.") }
+            guard current.myStatus != nil else { throw CalendarError("\"\(current.title)\" is not an invitation you can answer.") }
             item.event.attendees = item.event.attendees.map { person in
                 var person = person
                 if person.isCurrentUser { person.status = answer.status }
@@ -207,8 +206,20 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
             item.event.modified = Date()
             series[ref.eventID] = item
             changes += 1
-            return InvitationResult(event: try occurrence(ref), check: check, answered: true)
+            return try occurrence(ref)
         }
+    }
+
+    private func newID() -> String {
+        defer { nextID += 1 }
+        return "MEM-\(nextID)"
+    }
+
+    /// Ends a repeating series on the day before `date`, dropping its later exceptions.
+    private func end(_ item: inout Series, before date: Date) {
+        item.event.recurrence?.until = dayBefore(date)
+        item.event.recurrence?.count = nil
+        item.exceptions = item.exceptions.filter { $0.key < date }
     }
 
     private func checkAccess() throws {
@@ -217,9 +228,9 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
 
     private func writableCalendar(_ id: String?) throws -> CalendarInfo {
         let calendar = id.map { id in calendarList.first { $0.id == id } }
-            ?? calendarList.first { $0.isDefault && $0.writable } ?? calendarList.first(where: \.writable)
+            ?? calendarList.defaultWritable
         guard let calendar else { throw CalendarError("No calendar with id \(id ?? "(default)").") }
-        guard calendar.writable else { throw CalendarError("\"\(calendar.title)\" is read-only.") }
+        guard calendar.writable else { throw CalendarError.readOnly(calendar.title) }
         return calendar
     }
 

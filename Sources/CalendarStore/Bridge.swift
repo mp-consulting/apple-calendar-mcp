@@ -12,8 +12,6 @@ public struct PeerRequirement: Sendable, CustomStringConvertible {
     /// A code requirement (`csreq` language); nil accepts any process of this user (tests only).
     let text: String?
 
-    init(text: String?) { self.text = text }
-
     /// Tests: any process of this user. Never used by the app or the server.
     static let anyProcessForTesting = PeerRequirement(text: nil)
 
@@ -25,7 +23,7 @@ public struct PeerRequirement: Sendable, CustomStringConvertible {
     /// Code signed the way this process is: by the same team (Developer ID or Apple Development), else by the same
     /// certificate (the local signing identity of development builds), with one of `identifiers`. Ad-hoc signed or
     /// unsigned code has no stable identity: such builds cannot use the bridge.
-    public static func matchingSelf(identifiers: [String] = identifiers) throws -> PeerRequirement {
+    public static func matchingSelf() throws -> PeerRequirement {
         let names = "(" + identifiers.map { "identifier \"\($0)\"" }.joined(separator: " or ") + ")"
         let info = try CodeSigning.ownInfo()
         if let team = info.team {
@@ -103,6 +101,7 @@ enum BridgeRequest: Codable, Sendable {
     case create(EventDraft)
     case update(EventRef, EventChange, Span)
     case delete(EventRef, Span)
+    case invitationCheck(EventRef)
     case respond(EventRef, InvitationAnswer)
     case changeCount
     case approve(ApprovalRequest, timeout: TimeInterval)
@@ -118,7 +117,9 @@ struct BridgeResponse: Codable, Sendable {
     var event: Event?
     var count: Int?
     var decision: ApprovalDecision?
-    var invitation: InvitationResult?
+    var invitationCheck: InvitationCheck?
+    /// The app did not know the request: it is older than the server.
+    var unknownRequest: Bool?
 }
 
 /// Who answers at the other end.
@@ -150,17 +151,20 @@ enum BridgeCoding {
 struct LineSocket {
     let fd: Int32
     private var buffer: [UInt8] = []
+    private var scanned = 0  // bytes of `buffer` already known to hold no newline
+    private var chunk = [UInt8](repeating: 0, count: 65_536)
 
     init(fd: Int32) { self.fd = fd }
 
     mutating func readLine() -> Data? {
-        var chunk = [UInt8](repeating: 0, count: 65_536)
         while true {
-            if let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) {
+            if let newline = buffer[scanned...].firstIndex(of: UInt8(ascii: "\n")) {
                 let line = Data(buffer[..<newline])
                 buffer.removeFirst(newline + 1)
+                scanned = 0
                 return line
             }
+            scanned = buffer.count
             let count = chunk.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
             if count < 0, errno == EINTR { continue }
             guard count > 0 else { return nil }
@@ -206,6 +210,9 @@ struct LineSocket {
 /// Serves a backend (EventKit in the app) and the approval prompts to verified servers.
 public final class BridgeHost: @unchecked Sendable {
     public typealias Approver = @Sendable (ApprovalRequest, TimeInterval) async -> ApprovalDecision
+
+    /// The error text for a request the host cannot decode (what apps before 0.1.4 sent alone).
+    static let unreadable = "unreadable request"
 
     public let socket: URL
     private let backend: any CalendarBackend
@@ -287,7 +294,7 @@ public final class BridgeHost: @unchecked Sendable {
             if let request = try? BridgeCoding.decoder.decode(BridgeRequest.self, from: line) {
                 response = handle(request)
             } else {
-                response = BridgeResponse(error: "unreadable request")
+                response = BridgeResponse(error: Self.unreadable, unknownRequest: true)
             }
             guard let data = try? BridgeCoding.encoder.encode(response), connection.write(line: data) else { return }
         }
@@ -306,7 +313,8 @@ public final class BridgeHost: @unchecked Sendable {
             case let .delete(ref, span):
                 try backend.delete(ref, span: span)
                 return BridgeResponse()
-            case let .respond(ref, answer): return BridgeResponse(invitation: try backend.respond(ref, answer))
+            case .invitationCheck(let ref): return BridgeResponse(invitationCheck: try backend.invitationCheck(ref))
+            case let .respond(ref, answer): return BridgeResponse(event: try backend.respond(ref, answer))
             case .changeCount: return BridgeResponse(count: backend.changeCount())
             case let .approve(approval, timeout):
                 let box = DecisionBox()
@@ -357,6 +365,10 @@ public final class BridgeClient: @unchecked Sendable {
             throw CalendarError("The Apple Calendar MCP app stopped answering.")
         }
         let response = try BridgeCoding.decoder.decode(BridgeResponse.self, from: line)
+        // Apps before 0.1.4 say only "unreadable request".
+        if response.unknownRequest == true || response.error == BridgeHost.unreadable {
+            throw CalendarError("The Apple Calendar MCP app is older than this server and cannot do this; update the app.")
+        }
         if let error = response.error { throw CalendarError(error) }
         return response
     }
@@ -453,16 +465,14 @@ public final class BridgeBackend: CalendarBackend, @unchecked Sendable {
 
     public func delete(_ ref: EventRef, span: Span) throws { _ = try client.send(.delete(ref, span)) }
 
-    public func respond(_ ref: EventRef, _ answer: InvitationAnswer) throws -> InvitationResult {
-        let older = CalendarError("The menu bar app is older than this server and cannot answer invitations; update it.")
-        let response: BridgeResponse
-        do {
-            response = try client.send(.respond(ref, answer))
-        } catch let error as CalendarError where error.description == "unreadable request" {
-            throw older
-        }
-        guard let result = response.invitation else { throw older }
-        return result
+    public func invitationCheck(_ ref: EventRef) throws -> InvitationCheck {
+        guard let check = try client.send(.invitationCheck(ref)).invitationCheck else { throw CalendarError("The app did not return the check.") }
+        return check
+    }
+
+    public func respond(_ ref: EventRef, _ answer: InvitationAnswer) throws -> Event {
+        guard let event = try client.send(.respond(ref, answer)).event else { throw CalendarError("The app did not return the event.") }
+        return event
     }
 
     public func changeCount() -> Int { (try? client.send(.changeCount, timeout: 5).count) ?? 0 }

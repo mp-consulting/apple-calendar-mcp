@@ -3,12 +3,10 @@ import Foundation
 /// Something a tool wants to do that waits for the user's OK in the menu bar app.
 public struct ApprovalRequest: Codable, Sendable, Hashable, Identifiable {
     public enum Kind: String, Codable, Sendable {
-        /// Delete events (Calendar has no Trash).
+        /// Delete events (Calendar has no Trash); `attendees` lists who may hear about it.
         case delete
-        /// Change or delete events other people are invited to: their calendar server may tell them.
+        /// Change events other people are invited to: their calendar server may tell them.
         case notify
-        /// Create or change more events at once than the user's threshold.
-        case bulk
     }
 
     public var id: UUID

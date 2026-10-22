@@ -46,7 +46,6 @@ public struct ClientInstaller: Sendable {
 
     var claudeCodeConfig: URL { home.appending(path: ".claude.json") }
     var desktopConfig: URL { home.appending(path: "Library/Application Support/Claude/claude_desktop_config.json") }
-    public var desktopConfigPath: String { desktopConfig.path }
 
     /// Touched whenever this app changes its entry in the Claude app's config. The config's own date can't say
     /// that: the Claude app saves its preferences in the same file while it runs.
@@ -180,7 +179,7 @@ public struct ClientInstaller: Sendable {
 
     /// Sets (or with nil removes) our entry under `mcpServers`, keeping everything else in the file.
     private func setServerEntry(_ entry: [String: Any]?, in url: URL) throws {
-        try editJSON(url, backup: true) { root in
+        try editJSON(url) { root in
             var servers = root["mcpServers"] as? [String: Any] ?? [:]
             servers[Self.serverName] = entry
             root["mcpServers"] = servers
@@ -192,7 +191,7 @@ public struct ClientInstaller: Sendable {
         }
     }
 
-    private func editJSON(_ url: URL, backup: Bool, _ change: (inout [String: Any]) -> Void) throws {
+    private func editJSON(_ url: URL, _ change: (inout [String: Any]) -> Void) throws {
         var root: [String: Any] = [:]
         if FileManager.default.fileExists(atPath: url.path) {
             let data = try Data(contentsOf: url)
@@ -202,13 +201,11 @@ public struct ClientInstaller: Sendable {
                 }
                 root = parsed
             }
-            if backup {
-                // The config can hold MCP server secrets: the copy gets the original's owner-only permissions.
-                let copy = url.appendingPathExtension("bak")
-                try data.write(to: copy, options: .atomic)
-                let mode = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.posixPermissions] as? Int ?? 0o600
-                try FileManager.default.setAttributes([.posixPermissions: mode & 0o700], ofItemAtPath: copy.path)
-            }
+            // The config can hold MCP server secrets: the copy gets the original's owner-only permissions.
+            let copy = url.appendingPathExtension("bak")
+            try data.write(to: copy, options: .atomic)
+            let mode = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.posixPermissions] as? Int ?? 0o600
+            try FileManager.default.setAttributes([.posixPermissions: mode & 0o700], ofItemAtPath: copy.path)
         } else {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         }

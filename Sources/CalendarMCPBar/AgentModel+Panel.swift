@@ -34,17 +34,12 @@ struct ApprovalWording {
     var no: String
 
     init(_ request: ApprovalRequest) {
-        let deleting = request.tool == "delete_event" || request.kind == .delete
-        let many = request.items.count > 1
         switch request.kind {
         case .delete:
-            self.init(question: many ? "DELETE THESE EVENTS?" : "DELETE THIS EVENT?", yes: "Delete", no: "Don't")
+            let question = request.items.count > 1 ? "DELETE THESE EVENTS?" : request.attendees.isEmpty ? "DELETE THIS EVENT?" : "DELETE A SHARED EVENT?"
+            self.init(question: question, yes: "Delete", no: "Don't")
         case .notify:
-            self.init(
-                question: deleting ? "DELETE A SHARED EVENT?" : "CHANGE A SHARED EVENT?",
-                yes: deleting ? "Delete" : "Change", no: "Don't")
-        case .bulk:
-            self.init(question: "CHANGE THESE EVENTS?", yes: "Go Ahead", no: "Don't")
+            self.init(question: "CHANGE A SHARED EVENT?", yes: "Change", no: "Don't")
         }
     }
 
@@ -62,7 +57,7 @@ extension AgentModel {
 
     var headline: String {
         if !pending.isEmpty {
-            return pending.count == 1 ? "1 request waiting for your OK" : "\(pending.count) requests waiting for your OK"
+            return plural(pending.count, "request") + " waiting for your OK"
         }
         if !attention.isEmpty {
             return attention.count == 1 ? "1 thing needs attention" : "\(attention.count) things need attention"
@@ -77,11 +72,6 @@ extension AgentModel {
 
     var timed: [Event] { today.filter { !$0.isAllDay } }
     var allDay: [Event] { today.filter(\.isAllDay) }
-
-    var currentEvents: [Event] {
-        let now = clock()
-        return timed.filter { $0.start <= now && $0.end > now }
-    }
 
     var nextEvent: Event? {
         let now = clock()
@@ -103,8 +93,6 @@ extension AgentModel {
         return FreeTime.slots(events: today, from: now, to: end, duration: 15 * 60, hours: settings.workHours).reduce(0) { $0 + $1.duration }
     }
 
-    var conflictsToday: Int { Conflicts.find(today).count }
-
     func color(of event: Event) -> Color {
         Color(hex: calendars.first { $0.id == event.calendarID }?.color ?? "#8E8E93")
     }
@@ -113,7 +101,7 @@ extension AgentModel {
     var footerLine: String {
         guard access.canRead else { return "No calendar access yet" }
         let visible = calendars.count - settings.hiddenCalendars.filter { id in calendars.contains { $0.id == id } }.count
-        return "\(visible) calendar\(visible == 1 ? "" : "s") · \(Set(calendars.map(\.account)).count) accounts"
+        return "\(plural(visible, "calendar")) · \(Set(calendars.map(\.account)).count) accounts"
     }
 
     var updaterLine: String {
@@ -132,8 +120,8 @@ extension AgentModel {
     var claudeNeedsAction: Bool {
         let code = clientStatus[.claudeCode] ?? .notInstalled
         let app = clientStatus[.claudeDesktop] ?? .notInstalled
-        let codeTodo = code == .notInstalled || { if case .otherCommand = code { true } else { false } }()
-        let appTodo = app == .notInstalled || { if case .otherCommand = app { true } else { false } }() || claudeAppNeedsRestart
+        let codeTodo = code != .installed && code != .clientMissing
+        let appTodo = app != .installed && app != .clientMissing || claudeAppNeedsRestart
         return codeTodo || appTodo || (code == .installed && installedSkillCount == 0)
     }
 
@@ -202,7 +190,7 @@ extension AgentModel {
         switch clientStatus[.claudeCode] ?? .notInstalled {
         case .installed:
             let skills = installedSkillCount
-            return skills == 0 ? "Server connected · no skills yet" : "Server connected · \(skills) skill\(skills == 1 ? "" : "s")"
+            return skills == 0 ? "Server connected · no skills yet" : "Server connected · \(plural(skills, "skill"))"
         case .otherCommand: return "Uses another calendar server; connect to switch"
         case .notInstalled: return "Adds the server and the skills"
         case .clientMissing: return "Claude Code isn't installed"
@@ -263,7 +251,7 @@ extension AgentModel {
         do {
             let zips = try SkillInstaller.exportZips(SkillCatalog.all.filter { selectedSkills.contains($0.name) }, to: folder)
             NSWorkspace.shared.activateFileViewerSelecting(zips)
-            skillsMessage = "Saved \(zips.count) skill\(zips.count == 1 ? "" : "s") to Downloads › Apple Calendar MCP Skills. In Claude, open Settings › Capabilities › Skills and upload each .zip."
+            skillsMessage = "Saved \(plural(zips.count, "skill")) to Downloads › Apple Calendar MCP Skills. In Claude, open Settings › Capabilities › Skills and upload each .zip."
         } catch {
             skillsMessage = "Could not export: \(error.localizedDescription)"
         }

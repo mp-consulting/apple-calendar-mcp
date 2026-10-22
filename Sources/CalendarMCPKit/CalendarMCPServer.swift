@@ -18,18 +18,11 @@ public enum CalendarMCPVersion {
     /// The version with its build as semver build metadata (`0.1.0+1a2b3c4`, `+dev` for an unstamped build).
     public static let build = "\(current)+\(commit ?? "dev")"
 
-    /// Whether `version` (a ``build`` string) is older than `reference`, comparing the numeric parts only.
+    /// Whether `version` (a ``build`` string) is older than `reference`, ignoring the build; unreadable counts as older.
     public static func isOlder(_ version: String?, than reference: String = current) -> Bool {
-        let numbers = { (text: String) in
-            text.split(separator: "+")[0].split(separator: ".").map { Int($0.prefix { $0.isNumber }) ?? 0 }
-        }
-        guard let version, !version.isEmpty else { return true }
-        let (a, b) = (numbers(version), numbers(reference))
-        for index in 0..<max(a.count, b.count) {
-            let (x, y) = (index < a.count ? a[index] : 0, index < b.count ? b[index] : 0)
-            if x != y { return x < y }
-        }
-        return false
+        let release = { (text: String) in AppVersion(String(text.split(separator: "+", omittingEmptySubsequences: false)[0])) }
+        guard let version, let ours = release(version), let theirs = release(reference) else { return true }
+        return ours < theirs
     }
 }
 

@@ -168,7 +168,7 @@ final class AgentModel {
         let start = Calendar.current.startOfDay(for: clock())
         let end = Calendar.current.date(byAdding: .day, value: 1, to: start)!
         let events = ((try? backend.events(in: start, end)) ?? [])
-            .filter { !hidden.contains($0.calendarID) && $0.status != .cancelled && $0.myStatus != .declined }
+            .filter { !hidden.contains($0.calendarID) && $0.isAttended }
         if events != today { today = events }
     }
 
@@ -243,26 +243,21 @@ final class AgentModel {
     func loadDemoApprovals(_ count: Int) {
         let start = Calendar.current.startOfDay(for: clock())
         let week = (try? backend.events(in: start, start.addingTimeInterval(7 * 86_400))) ?? []
-        func line(_ event: Event) -> String {
-            let day = event.start.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
-            let time = event.isAllDay ? "all day" : event.start.formatted(.dateTime.hour().minute()) + "–" + event.end.formatted(.dateTime.hour().minute())
-            return "\(day) \(time) · \(event.title) · \(event.calendarTitle)"
-        }
         var samples: [ApprovalRequest] = []
         if let sync = week.first(where: { $0.title == "Engineering sync" }) {
             let moved = sync.start.addingTimeInterval(45 * 60)
             samples.append(ApprovalRequest(
-                tool: "update_event", client: "Claude Code", kind: .notify, title: sync.title, items: [line(sync)],
+                tool: "update_event", client: "Claude Code", kind: .notify, title: sync.title, items: [sync.summaryLine],
                 attendees: sync.attendees.filter { !$0.isCurrentUser }.map(\.formatted),
                 detail: "Moves to " + moved.formatted(.dateTime.weekday(.abbreviated).hour().minute()) + "–"
                     + moved.addingTimeInterval(sync.duration).formatted(.dateTime.hour().minute())))
         }
         let personal = week.filter { ["Swimming lessons", "Dentist"].contains($0.title) }.prefix(2)
         if !personal.isEmpty {
-            samples.append(ApprovalRequest(tool: "delete_event", client: "Claude", kind: .delete, title: "\(personal.count) events", items: personal.map(line)))
+            samples.append(ApprovalRequest(tool: "delete_event", client: "Claude", kind: .delete, title: "\(personal.count) events", items: personal.map(\.summaryLine)))
         }
         if let focus = week.first(where: { $0.title.hasPrefix("Focus") }) {
-            samples.append(ApprovalRequest(tool: "delete_event", client: "Claude Code", kind: .delete, title: focus.title, items: [line(focus)]))
+            samples.append(ApprovalRequest(tool: "delete_event", client: "Claude Code", kind: .delete, title: focus.title, items: [focus.summaryLine]))
         }
         pending = Array(samples.prefix(count))
     }
@@ -311,7 +306,7 @@ final class AgentModel {
     func refreshInstalledSkills() {
         guard settings.updateInstalledSkills else { return }
         if let updated = try? skillInstaller.refreshInstalled(), !updated.isEmpty {
-            skillsMessage = "Updated \(updated.count) Claude skill\(updated.count == 1 ? "" : "s") to this version."
+            skillsMessage = "Updated \(plural(updated.count, "Claude skill")) to this version."
         }
         refreshSkills()
     }
@@ -321,7 +316,7 @@ final class AgentModel {
     func installSelectedSkills() {
         do {
             let done = try skillInstaller.install(chosenSkills)
-            skillsMessage = "Added \(done.count) skill\(done.count == 1 ? "" : "s") to Claude Code (~/.claude/skills). New Claude Code sessions pick them up."
+            skillsMessage = "Added \(plural(done.count, "skill")) to Claude Code (~/.claude/skills). New Claude Code sessions pick them up."
         } catch {
             skillsMessage = "Could not install: \(error.localizedDescription)"
         }
@@ -332,7 +327,7 @@ final class AgentModel {
     func uninstallSelectedSkills() {
         do {
             let removed = try skillInstaller.uninstall(chosenSkills)
-            skillsMessage = "Removed \(removed.count) skill\(removed.count == 1 ? "" : "s")."
+            skillsMessage = "Removed \(plural(removed.count, "skill"))."
         } catch {
             skillsMessage = "Could not remove: \(error.localizedDescription)"
         }
@@ -371,12 +366,7 @@ final class AgentModel {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")!)
     }
 
-    func openCalendarApp() {
-        NSWorkspace.shared.open(URL(filePath: "/System/Applications/Calendar.app"))
-    }
-
     func open(_ event: Event) {
-        let id = event.eventID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? event.eventID
-        if let url = URL(string: "ical://ekevent/\(id)?method=show&options=more") { NSWorkspace.shared.open(url) }
+        if let url = URL(string: event.calendarLink) { NSWorkspace.shared.open(url) }
     }
 }

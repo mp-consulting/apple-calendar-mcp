@@ -240,7 +240,7 @@ public indirect enum JSON: Sendable, Equatable {
     }
 
     public func serialized(pretty: Bool = false) -> String {
-        if pretty { return reference(pretty: true) }
+        if pretty { return prettyText() }
         // Tool output: UTF-8 bytes into one buffer, and strings that need no escaping copied whole. Appending scalar
         // by scalar to a String made writing a page of results take longer than finding them.
         return String(decoding: compactUTF8(), as: UTF8.self)
@@ -254,10 +254,10 @@ public indirect enum JSON: Sendable, Equatable {
         return out
     }
 
-    /// The straightforward writer: pretty output, and what `serialized()` must equal (tests).
-    func reference(pretty: Bool) -> String {
+    /// Indented output, written the straightforward way.
+    func prettyText() -> String {
         var out = ""
-        write(into: &out, pretty: pretty, indent: 0)
+        write(into: &out, indent: 0)
         return out
     }
 
@@ -315,10 +315,10 @@ public indirect enum JSON: Sendable, Equatable {
         out.append(UInt8(ascii: "\""))
     }
 
-    private func write(into out: inout String, pretty: Bool, indent: Int) {
-        let newline = pretty ? "\n" : ""
-        let pad = pretty ? String(repeating: "  ", count: indent + 1) : ""
-        let closePad = pretty ? String(repeating: "  ", count: indent) : ""
+    private func write(into out: inout String, indent: Int) {
+        let newline = "\n"
+        let pad = String(repeating: "  ", count: indent + 1)
+        let closePad = String(repeating: "  ", count: indent)
         switch self {
         case .null: out += "null"
         case .bool(let b): out += b ? "true" : "false"
@@ -330,7 +330,7 @@ public indirect enum JSON: Sendable, Equatable {
             out += "[" + newline
             for (index, item) in items.enumerated() {
                 out += pad
-                item.write(into: &out, pretty: pretty, indent: indent + 1)
+                item.write(into: &out, indent: indent + 1)
                 if index < items.count - 1 { out += "," }
                 out += newline
             }
@@ -341,8 +341,8 @@ public indirect enum JSON: Sendable, Equatable {
             for (index, (key, value)) in pairs.enumerated() {
                 out += pad
                 JSON.escape(key, into: &out)
-                out += pretty ? ": " : ":"
-                value.write(into: &out, pretty: pretty, indent: indent + 1)
+                out += ": "
+                value.write(into: &out, indent: indent + 1)
                 if index < pairs.count - 1 { out += "," }
                 out += newline
             }
@@ -394,12 +394,6 @@ enum Render {
 
     static func hours(_ value: Double) -> JSON { .double((value * 10).rounded() / 10) }
 
-    /// Calendar's own link to an event (`open_in_calendar` and the menu bar app open it).
-    static func link(_ event: Event) -> String {
-        let id = event.eventID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? event.eventID
-        return "ical://ekevent/\(id)?method=show&options=more"
-    }
-
     /// One event in a list: what is needed to recognize it and act on it.
     static func event(_ event: Event) -> JSON {
         let organizer = event.organizer.flatMap { $0.isCurrentUser || event.attendees.isEmpty ? nil : $0 }
@@ -446,7 +440,7 @@ enum Render {
             ("created", event.created.map(date)),
             ("modified", event.modified.map(date)),
             ("uid", event.externalID.map(JSON.string)),
-            ("link", .string(link(event))),
+            ("link", .string(event.calendarLink)),
         ]
         return .object(pairs + extra.compactMap { key, value in value.map { (key, $0) } })
     }
@@ -477,19 +471,6 @@ enum Render {
             ("read_only", calendar.writable ? nil : .bool(true)),
             ("default", calendar.isDefault ? .bool(true) : nil),
         ])
-    }
-
-    /// "Tue 21 Oct 14:00–15:00 · Design review · Work", for approvals and summaries.
-    static func line(_ event: Event) -> String {
-        let when: String
-        if event.isAllDay {
-            when = event.start.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)) + " (all day)"
-        } else {
-            let sameDay = Calendar.current.isDate(event.start, inSameDayAs: event.end)
-            when = event.start.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).hour().minute()) + "–"
-                + (sameDay ? event.end.formatted(.dateTime.hour().minute()) : event.end.formatted(.dateTime.day().month(.abbreviated).hour().minute()))
-        }
-        return [when, event.title, event.calendarTitle].joined(separator: " · ")
     }
 
     static func slot(_ interval: DateInterval) -> JSON {

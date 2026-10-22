@@ -11,9 +11,10 @@ public protocol CalendarBackend: Sendable {
     func create(_ draft: EventDraft) throws -> Event
     func update(_ ref: EventRef, _ change: EventChange, span: Span) throws -> Event
     func delete(_ ref: EventRef, span: Span) throws
-    /// Answers an invitation to `ref` as the user (Calendar sends the answer to the organizer), or with `dryRun` only
-    /// says whether it can.
-    func respond(_ ref: EventRef, _ answer: InvitationAnswer) throws -> InvitationResult
+    /// Whether the user's answer to the invitation `ref` can be set here.
+    func invitationCheck(_ ref: EventRef) throws -> InvitationCheck
+    /// Answers the invitation `ref` as the user; Calendar sends the answer to the organizer.
+    func respond(_ ref: EventRef, _ answer: InvitationAnswer) throws -> Event
     /// Grows whenever the calendar database changes (in this process or elsewhere).
     func changeCount() -> Int
 }
@@ -25,6 +26,10 @@ public struct CalendarError: Error, CustomStringConvertible, Sendable, Equatable
     public static func notFound(_ ref: EventRef) -> CalendarError {
         CalendarError("No event with id \(ref.string). It may have been deleted, or its id changed; search for it again.")
     }
+
+    public static func readOnly(_ title: String) -> CalendarError { CalendarError("\"\(title)\" is read-only.") }
+
+    public static let endBeforeStart = CalendarError("The end is before the start.")
 }
 
 extension CalendarBackend {

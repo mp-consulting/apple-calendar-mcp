@@ -102,7 +102,7 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
     /// The EKEvent for `ref`: the series' first occurrence, or the occurrence starting (originally) at `ref.occurrence`.
     private static func find(_ ref: EventRef, in store: EKEventStore) throws -> EKEvent? {
         guard let first = store.event(withIdentifier: ref.eventID) else { return nil }
-        guard let occurrence = ref.occurrence, first.hasRecurrenceRules || first.isDetached else { return first }
+        guard let occurrence = ref.occurrence, first.isRecurring else { return first }
         if first.occurrenceDate == occurrence || first.startDate == occurrence { return first }
         // Occurrences live only in date queries: look around the original start (a moved one may be a day away).
         let window = max(first.endDate.timeIntervalSince(first.startDate), 3600) + 2 * 86_400
@@ -127,7 +127,7 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
                 }
                 event.calendar = calendar
             }
-            guard event.calendar.allowsContentModifications else { throw CalendarError("\"\(event.calendar.title)\" is read-only.") }
+            try Self.requireWritable(event.calendar)
             event.title = draft.title
             event.isAllDay = draft.isAllDay
             event.startDate = draft.start
@@ -151,7 +151,7 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
     public func update(_ ref: EventRef, _ change: EventChange, span: Span) throws -> Event {
         try withStore { store in
             guard let event = try Self.find(ref, in: store) else { throw CalendarError.notFound(ref) }
-            guard event.calendar.allowsContentModifications else { throw CalendarError("\"\(event.calendar.title)\" is read-only.") }
+            try Self.requireWritable(event.calendar)
             if let title = change.title { event.title = title }
             if let isAllDay = change.isAllDay { event.isAllDay = isAllDay }
             if let start = change.start {
@@ -160,7 +160,7 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
                 if change.end == nil { event.endDate = start.addingTimeInterval(duration) }
             }
             if let end = change.end { event.endDate = end }
-            guard event.endDate >= event.startDate else { throw CalendarError("The end is before the start.") }
+            guard event.endDate >= event.startDate else { throw CalendarError.endBeforeStart }
             if let zone = change.timeZone { event.timeZone = zone.isEmpty ? nil : TimeZone(identifier: zone) }
             if let location = change.location {
                 event.location = location.isEmpty ? nil : location
@@ -174,7 +174,7 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
             if let rule = change.recurrence { event.recurrenceRules = [Self.ekRule(rule)] }
             if let id = change.calendarID {
                 guard let calendar = store.calendar(withIdentifier: id) else { throw CalendarError("No calendar with id \(id).") }
-                guard calendar.allowsContentModifications else { throw CalendarError("\"\(calendar.title)\" is read-only.") }
+                try Self.requireWritable(calendar)
                 event.calendar = calendar
             }
             do {
@@ -189,7 +189,7 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
     public func delete(_ ref: EventRef, span: Span) throws {
         try withStore { store in
             guard let event = try Self.find(ref, in: store) else { throw CalendarError.notFound(ref) }
-            guard event.calendar.allowsContentModifications else { throw CalendarError("\"\(event.calendar.title)\" is read-only.") }
+            try Self.requireWritable(event.calendar)
             do {
                 try store.remove(event, span: Self.ekSpan(span, event), commit: true)
             } catch {
@@ -204,11 +204,17 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
     /// and the account sends the answer to the organizer when the event is saved (checked with Google and iCloud,
     /// macOS 27). Each call is checked with `responds(to:)` first. `canBeRespondedTo` is false for invitations that
     /// can be answered this way, so it is not consulted: `allowsParticipationStatusModifications` is the gate.
-    public func respond(_ ref: EventRef, _ answer: InvitationAnswer) throws -> InvitationResult {
+    public func invitationCheck(_ ref: EventRef) throws -> InvitationCheck {
+        try withStore { store in
+            guard let event = try Self.find(ref, in: store) else { throw CalendarError.notFound(ref) }
+            return Self.invitationCheck(event)
+        }
+    }
+
+    public func respond(_ ref: EventRef, _ answer: InvitationAnswer) throws -> Event {
         try withStore { store in
             guard let event = try Self.find(ref, in: store) else { throw CalendarError.notFound(ref) }
             let check = Self.invitationCheck(event)
-            guard !answer.dryRun else { return InvitationResult(event: Self.event(event), check: check, answered: false) }
             guard check.supported else { throw CalendarError("This version of macOS does not let apps answer invitations; answer it in Calendar.") }
             guard check.answerable else { throw CalendarError("Calendar does not allow changing your answer to \"\(event.title ?? "")\".") }
             let status: EKParticipantStatus = switch answer.status {
@@ -227,7 +233,7 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
             } catch {
                 throw CalendarError("Calendar refused the answer: \(error.localizedDescription)")
             }
-            return InvitationResult(event: Self.event(event), check: check, answered: true)
+            return Self.event(event)
         }
     }
 
@@ -241,8 +247,12 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
             allowsComment: flag("allowsResponseCommentModifications"), appliesToAll: flag("responseMustApplyToAll"))
     }
 
+    private static func requireWritable(_ calendar: EKCalendar) throws {
+        guard calendar.allowsContentModifications else { throw CalendarError.readOnly(calendar.title) }
+    }
+
     private static func ekSpan(_ span: Span, _ event: EKEvent) -> EKSpan {
-        span == .futureEvents && (event.hasRecurrenceRules || event.isDetached) ? .futureEvents : .thisEvent
+        span == .futureEvents && event.isRecurring ? .futureEvents : .thisEvent
     }
 
     // MARK: Conversion
@@ -280,7 +290,7 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
         case .canceled: .cancelled
         default: .none
         }
-        let recurring = event.hasRecurrenceRules || event.isDetached
+        let recurring = event.isRecurring
         return Event(
             eventID: event.eventIdentifier ?? event.calendarItemIdentifier, externalID: event.calendarItemExternalIdentifier,
             calendarID: event.calendar?.calendarIdentifier ?? "", calendarTitle: event.calendar?.title ?? "", title: event.title ?? "",
@@ -369,6 +379,10 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
             daysOfTheMonth: rule.monthDays?.map { NSNumber(value: $0) }, monthsOfTheYear: nil, weeksOfTheYear: nil, daysOfTheYear: nil,
             setPositions: nil, end: end)
     }
+}
+
+extension EKEvent {
+    fileprivate var isRecurring: Bool { hasRecurrenceRules || isDetached }
 }
 
 extension Comparable {

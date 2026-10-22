@@ -14,19 +14,17 @@ extension CalendarToolbox {
 
     var importICS: ToolDefinition {
         ToolDefinition(
-            tool: Self.tool(
-                "import_ics", "Import .ics file",
-                """
-                Add the events of an iCalendar file (an invitation saved from Mail, a booking, an export) to a calendar. \
-                Events already in the calendar (same UID) are skipped. Importing an invitation adds a copy; it does not \
-                answer the organizer. Use dry_run to see the events first.
-                """,
-                Schema.object([
-                    "path": Schema.string("The .ics file"),
-                    "calendar": Schema.string("Calendar by id, title, or Account/Title (default: the default calendar)"),
-                    "dry_run": Schema.boolean("List the file's events without adding them"),
-                ], required: ["path"]), kind: .change),
-            kind: .change
+            "import_ics", "Import .ics file",
+            """
+            Add the events of an iCalendar file (an invitation saved from Mail, a booking, an export) to a calendar. \
+            Events already in the calendar (same UID) are skipped. Importing an invitation adds a copy; it does not \
+            answer the organizer. Use dry_run to see the events first.
+            """,
+            Schema.object([
+                "path": Schema.string("The .ics file"),
+                "calendar": Schema.string("Calendar by id, title, or Account/Title (default: the default calendar)"),
+                "dry_run": Schema.boolean("List the file's events without adding them"),
+            ], required: ["path"]), kind: .change
         ) { arguments in
             let path = try self.pathGuard.checkRead(arguments.requiredString("path"))
             guard ["ics", "ical", "icalendar", "ifb"].contains((path as NSString).pathExtension.lowercased()) else {
@@ -53,24 +51,26 @@ extension CalendarToolbox {
                 return .object(pairs)
             }
             if try arguments.bool("dry_run") == true {
-                try self.requireChanges()
-                return ToolReply(
+                    return ToolReply(
                     json: .obj([
                         ("dry_run", .bool(true)), ("calendar", .string(calendar.title)),
                         ("invitation", items.contains(where: \.isInvitation) ? .bool(true) : nil),
                         ("events", .array(items.map(preview))),
                     ]),
-                    summary: "dry run: \(Self.plural(items.count, "event"))")
+                    summary: "dry run: \(plural(items.count, "event"))")
             }
-            try self.requireChanges()
             var created: [Event] = []
             var skipped: [JSON] = []
             var records: [ChangeRecord] = []
+            // UIDs already in any calendar, from one query around all the items.
+            let dated = items.filter { $0.uid != nil }
+            let known: Set<String> = dated.isEmpty ? [] : Set(try self.backend.events(
+                in: dated.map(\.draft.start).min()!.addingTimeInterval(-86_400), dated.map(\.draft.end).max()!.addingTimeInterval(86_400)
+            ).compactMap(\.externalID))
             for item in items {
                 try Task.checkCancellation()
                 if let uid = item.uid {
-                    let around = try self.events(from: item.draft.start.addingTimeInterval(-86_400), to: item.draft.end.addingTimeInterval(86_400), calendarIDs: nil)
-                    if around.contains(where: { $0.externalID == uid }) {
+                    if known.contains(uid) {
                         skipped.append(.obj([("title", .string(item.draft.title)), ("reason", .string("already in the calendar"))]))
                         continue
                     }
@@ -86,9 +86,9 @@ extension CalendarToolbox {
                 json: .obj([
                     ("created", .array(created.map(Render.event))), ("skipped", skipped.isEmpty ? nil : .array(skipped)),
                     ("note", items.contains(where: \.isInvitation) ? .string("This was an invitation: the organizer was not answered. Answer it in Calendar or Mail.") : nil),
-                    ("undo_ids", records.isEmpty || self.journal == nil ? nil : .array(records.map { .string($0.id.uuidString) })),
+                    ("undo_ids", self.undoIDs(records)),
                 ]),
-                summary: "imported \(Self.plural(created.count, "event"))", event: created.first)
+                summary: "imported \(plural(created.count, "event"))", event: created.first)
         }
     }
 
@@ -96,22 +96,20 @@ extension CalendarToolbox {
 
     var exportEvents: ToolDefinition {
         ToolDefinition(
-            tool: Self.tool(
-                "export_events", "Export events",
-                """
-                Write the events of a period (default: today and the next 30 days) to one file: .ics for other calendar \
-                apps, CSV for a spreadsheet, or JSON. Returns the path and the number of events, not their content.
-                """,
-                Schema.object([
-                    "path": Schema.string("The file to write (.ics, .csv or .json)"),
-                    "format": Schema.string("Default: from the file's extension", enum: ["ics", "csv", "json"]),
-                    "start": Schema.string("From: \(Schema.date) (default: today)"),
-                    "end": Schema.string("Until (default: 30 days after start)"),
-                    "calendars": Self.calendarsProperty,
-                    "query": Schema.string("Only events matching these words (title, place, notes, people)"),
-                    "time_zone": Self.zoneProperty,
-                ], required: ["path"]), kind: .fileWrite),
-            kind: .fileWrite
+            "export_events", "Export events",
+            """
+            Write the events of a period (default: today and the next 30 days) to one file: .ics for other calendar \
+            apps, CSV for a spreadsheet, or JSON. Returns the path and the number of events, not their content.
+            """,
+            Schema.object([
+                "path": Schema.string("The file to write (.ics, .csv or .json)"),
+                "format": Schema.string("Default: from the file's extension", enum: ["ics", "csv", "json"]),
+                "start": Schema.string("From: \(Schema.date) (default: today)"),
+                "end": Schema.string("Until (default: 30 days after start)"),
+                "calendars": Self.calendarsProperty,
+                "query": Schema.string("Only events matching these words (title, place, notes, people)"),
+                "time_zone": Self.zoneProperty,
+            ], required: ["path"]), kind: .fileWrite
         ) { arguments in
             let path = try self.pathGuard.checkWrite(arguments.requiredString("path"))
             let format = try arguments.string("format")?.lowercased() ?? (path as NSString).pathExtension.lowercased()
@@ -131,7 +129,7 @@ extension CalendarToolbox {
             try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
             return ToolReply(
                 json: .obj([("path", .string(path)), ("format", .string(format)), ("events", .int(Int64(events.count)))]),
-                summary: "exported \(Self.plural(events.count, "event")) to \(format)")
+                summary: "exported \(plural(events.count, "event")) to \(format)")
         }
     }
 
@@ -164,15 +162,13 @@ extension CalendarToolbox {
 
     var openInCalendar: ToolDefinition {
         ToolDefinition(
-            tool: Self.tool(
-                "open_in_calendar", "Open in Calendar",
-                "Show an event in the Calendar app (to invite people, answer an invitation, or look at it), or open Calendar.",
-                Schema.object(["id": Schema.string("The event to show (default: just open Calendar)")]), kind: .fileWrite),
-            kind: .fileWrite
+            "open_in_calendar", "Open in Calendar",
+            "Show an event in the Calendar app (to invite people, answer an invitation, or look at it), or open Calendar.",
+            Schema.object(["id": Schema.string("The event to show (default: just open Calendar)")]), kind: .fileWrite
         ) { arguments in
             if arguments.has("id") {
                 let event = try self.event(arguments.ref("id"))
-                guard let url = URL(string: Render.link(event)), self.open(url) else { throw ToolError("Calendar could not be opened.") }
+                guard let url = URL(string: event.calendarLink), self.open(url) else { throw ToolError("Calendar could not be opened.") }
                 return ToolReply(json: .obj([("opened", .string(event.title))]), summary: "opened 1 event", event: event)
             }
             guard self.open(URL(filePath: "/System/Applications/Calendar.app")) else { throw ToolError("Calendar could not be opened.") }

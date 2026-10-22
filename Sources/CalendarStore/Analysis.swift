@@ -128,7 +128,7 @@ public enum VideoLink {
         "gotomeeting.com", "meet.jit.si", "chime.aws", "bluejeans.com", "around.co", "discord.gg",
     ]
 
-    static var detector: NSDataDetector? { try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) }
+    static let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
 
     public static func find(in event: Event) -> String? {
         for text in [event.url, event.location, event.notes].compactMap({ $0 }) {
@@ -209,7 +209,7 @@ public struct TimeStatistics: Sendable {
     public var longest: [Event]
 
     public init(events all: [Event], calendar: Calendar = .current, top: Int = 10) {
-        let counted = all.filter { $0.status != .cancelled && $0.myStatus != .declined }
+        let counted = all.filter(\.isAttended)
         let timed = counted.filter { !$0.isAllDay }
         events = counted.count
         allDay = counted.count - timed.count
@@ -239,7 +239,7 @@ public struct TimeStatistics: Sendable {
         byWeekday = buckets { [names[calendar.component(.weekday, from: $0.start) - 1]] }
         byHour = buckets { [String(format: "%02d:00", calendar.component(.hour, from: $0.start))] }.sorted { $0.name < $1.name }
         byPerson = Array(buckets { event in
-            event.attendees.filter { !$0.isCurrentUser && $0.kind == .person }.map { $0.name ?? $0.email ?? "?" }
+            event.otherPeople.map(\.displayName)
         }.prefix(top))
         busiestDays = Array(buckets { [DayFormat.string($0.start, calendar: calendar)] }.prefix(5))
         longest = Array(timed.sorted { $0.duration > $1.duration }.prefix(5))

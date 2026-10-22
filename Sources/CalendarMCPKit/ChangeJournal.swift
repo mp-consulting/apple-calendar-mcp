@@ -1,6 +1,21 @@
 import CalendarStore
 import Foundation
 
+/// JSON with ISO 8601 dates, for the files the server keeps (journal, activity log).
+enum ISOCoding {
+    static let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }()
+
+    static let decoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }()
+}
+
 /// One change a tool made, with what `undo_change` needs to put it back.
 public struct ChangeRecord: Codable, Sendable, Identifiable, Equatable {
     public enum Kind: String, Codable, Sendable {
@@ -47,17 +62,8 @@ public final class ChangeJournal: @unchecked Sendable {
         self.maxAge = maxAge
     }
 
-    private static let encoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }()
-
-    private static let decoder: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }()
+    private static let encoder = ISOCoding.encoder
+    private static let decoder = ISOCoding.decoder
 
     public func records() -> [ChangeRecord] {
         lock.withLock { load() }

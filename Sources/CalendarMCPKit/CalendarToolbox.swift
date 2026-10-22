@@ -22,7 +22,23 @@ public struct ToolReply: Sendable {
 public struct ToolDefinition: Sendable {
     public var tool: Tool
     public var kind: ToolKind
+    /// A changing tool the dispatcher runs only while "Allow changes" is on; false for one that checks it itself.
+    public var guardsChanges: Bool
     public var run: @Sendable (Arguments) async throws -> ToolReply
+
+    init(
+        _ name: String, _ title: String, _ description: String, _ schema: Value, kind: ToolKind, destructive: Bool = false,
+        idempotent: Bool = false, guardsChanges: Bool? = nil, run: @escaping @Sendable (Arguments) async throws -> ToolReply
+    ) {
+        tool = Tool(
+            name: name, title: title, description: description, inputSchema: schema,
+            annotations: .init(
+                title: title, readOnlyHint: kind == .read, destructiveHint: kind == .read ? nil : destructive,
+                idempotentHint: kind == .read ? nil : idempotent, openWorldHint: false))
+        self.kind = kind
+        self.guardsChanges = guardsChanges ?? (kind == .change)
+        self.run = run
+    }
 }
 
 /// Asks the user in the menu bar app and returns their answer; throws when the app cannot be reached.
@@ -98,10 +114,9 @@ public final class CalendarToolbox: @unchecked Sendable {
     /// The calendars named in `key` (ids, titles, or "Account/Title"), else nil for "all visible".
     func calendarIDs(_ arguments: Arguments, key: String = "calendars") throws -> [String]? {
         let names = try arguments.strings(key)
+        if names.isEmpty && settings.current.hiddenCalendars.isEmpty { return nil }
         let visible = try visibleCalendars()
-        guard !names.isEmpty else {
-            return settings.current.hiddenCalendars.isEmpty ? nil : visible.map(\.id)
-        }
+        guard !names.isEmpty else { return visible.map(\.id) }
         return try names.map { try resolveCalendar($0, in: visible).id }
     }
 
@@ -171,11 +186,11 @@ public final class CalendarToolbox: @unchecked Sendable {
             }
         }
         guard ask else { return }
-        let people = Array(Set(shared.flatMap { $0.attendees.filter { !$0.isCurrentUser && $0.kind == .person }.map(\.formatted) })).sorted()
+        let people = Array(Set(shared.flatMap { $0.otherPeople.map(\.formatted) })).sorted()
         let title = events.count == 1 ? events[0].title : "\(events.count) events"
         let request = ApprovalRequest(
-            tool: tool, client: clientName, kind: shared.isEmpty ? .delete : .notify, title: title,
-            items: events.prefix(30).map(Render.line) + (events.count > 30 ? ["… and \(events.count - 30) more"] : []),
+            tool: tool, client: clientName, kind: deleting ? .delete : .notify, title: title,
+            items: events.prefix(30).map(\.summaryLine) + (events.count > 30 ? ["… and \(events.count - 30) more"] : []),
             attendees: Array(people.prefix(40)), detail: detail)
         let timeout = current.approvalTimeout
         let decision: ApprovalDecision
@@ -192,6 +207,13 @@ public final class CalendarToolbox: @unchecked Sendable {
     }
 
     func record(_ records: [ChangeRecord]) { journal?.append(records) }
+
+    /// The id `undo_change` takes for `record` (nil when undo is off).
+    func undoID(_ record: ChangeRecord) -> JSON? { journal == nil ? nil : .string(record.id.uuidString) }
+
+    func undoIDs(_ records: [ChangeRecord]) -> JSON? {
+        records.isEmpty || journal == nil ? nil : .array(records.map { .string($0.id.uuidString) })
+    }
 
     // MARK: Tool list
 
@@ -234,10 +256,11 @@ public final class CalendarToolbox: @unchecked Sendable {
                 guard let timeZone = TimeZone(identifier: zone) else { throw ToolError("time_zone \"\(zone)\" is not a time zone (use names like Europe/Paris)") }
                 parsed.timeZone = timeZone
             }
+            if definition.guardsChanges { try requireChanges() }
             let reply = try await definition.run(parsed)
             text = (isWrite ? reply.json.adding("server_version", .string(CalendarMCPVersion.build)) : reply.json).serialized()
             summary = reply.summary
-            link = reply.event.map(Render.link)
+            link = reply.event?.calendarLink
         } catch {
             ok = false
             text = "Error: \(error)"
@@ -248,17 +271,4 @@ public final class CalendarToolbox: @unchecked Sendable {
             milliseconds: Int(Date().timeIntervalSince(started) * 1000), summary: Render.truncate(summary, 160), isWrite: isWrite, link: link))
         return .init(content: [.text(text: text, annotations: nil, _meta: nil)], isError: ok ? nil : true)
     }
-
-    static func tool(
-        _ name: String, _ title: String, _ description: String, _ schema: Value, kind: ToolKind, destructive: Bool = false,
-        idempotent: Bool = false
-    ) -> Tool {
-        Tool(
-            name: name, title: title, description: description, inputSchema: schema,
-            annotations: .init(
-                title: title, readOnlyHint: kind == .read, destructiveHint: kind == .read ? nil : destructive,
-                idempotentHint: kind == .read ? nil : idempotent, openWorldHint: false))
-    }
-
-    static func plural(_ count: Int, _ word: String) -> String { "\(count) \(word)\(count == 1 ? "" : "s")" }
 }
