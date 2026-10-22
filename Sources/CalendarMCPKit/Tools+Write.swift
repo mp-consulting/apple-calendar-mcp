@@ -81,7 +81,10 @@ extension CalendarToolbox {
             }
             calendar = preferred
         }
-        guard calendar.writable else { throw ToolError("\"\(calendar.title)\" (\(calendar.account)) is read-only; pick another calendar.") }
+        guard calendar.writable else {
+            let why = settings.current.isReadOnly(calendar.id) ? "Claude may only read it (Apple Calendar MCP settings)" : "it is read-only"
+            throw ToolError("\"\(calendar.title)\" (\(calendar.account)): \(why); pick another calendar.")
+        }
         return calendar
     }
 
@@ -196,6 +199,7 @@ extension CalendarToolbox {
             let ref = try arguments.ref("id")
             let span = try Self.span(arguments)
             let current = try self.event(ref)
+            try self.requireWritable([current])
             let (start, end, allDay) = try self.times(arguments, current: current)
             var change = EventChange(
                 title: try arguments.string("title"), start: start, end: end, isAllDay: allDay, timeZone: try arguments.string("time_zone"),
@@ -261,10 +265,7 @@ extension CalendarToolbox {
             try self.checkBatch(refs.count)
             let span = try Self.span(arguments)
             let events = try refs.map(self.event)
-            let calendars = try self.backend.calendars()
-            if let locked = events.first(where: { event in calendars.first { $0.id == event.calendarID }?.writable == false }) {
-                throw ToolError("\"\(locked.title)\" is in a read-only calendar (\(locked.calendarTitle)). Nothing was deleted.")
-            }
+            try self.requireWritable(events, nothing: "Nothing was deleted.")
             if try arguments.bool("dry_run") == true {
                 return ToolReply(
                     json: .obj([("dry_run", .bool(true)), ("would_delete", .array(events.map(Render.event)))]
@@ -323,6 +324,7 @@ extension CalendarToolbox {
             guard current.myStatus != nil else {
                 throw ToolError("\"\(current.title)\" is not an invitation from someone else; there is nothing to answer.")
             }
+            try self.requireWritable([current], nothing: "It was not answered.")
             let answer = InvitationAnswer(status: status, comment: try arguments.string("comment"), span: try Self.span(arguments))
             let check = try self.backend.invitationCheck(ref)
             let checkJSON = JSON.obj([

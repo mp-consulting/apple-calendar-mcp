@@ -156,6 +156,20 @@ public final class CalendarToolbox: @unchecked Sendable {
         }
     }
 
+    /// Throws for events in calendars Calendar or the user's settings keep read-only; `nothing` ends the message.
+    func requireWritable(_ events: [Event], nothing: String = "Nothing was changed.") throws {
+        let current = settings.current
+        let calendars = try backend.calendars()
+        for event in events {
+            if current.isReadOnly(event.calendarID) {
+                throw ToolError("\"\(event.title)\" is in \(event.calendarTitle), which Claude may only read (Apple Calendar MCP settings). \(nothing)")
+            }
+            if calendars.first(where: { $0.id == event.calendarID })?.writable == false {
+                throw ToolError("\"\(event.title)\" is in a read-only calendar (\(event.calendarTitle)). \(nothing)")
+            }
+        }
+    }
+
     func checkBatch(_ count: Int) throws {
         let limit = settings.current.maxBatchSize
         guard count <= limit else {

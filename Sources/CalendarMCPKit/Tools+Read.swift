@@ -26,7 +26,10 @@ extension CalendarToolbox {
     var listCalendars: ToolDefinition {
         ToolDefinition(
             "list_calendars", "List calendars",
-            "Calendars with their account, colour, whether they can be changed, and which one new events go to by default.",
+            """
+            Calendars with their account, colour, whether they can be changed (read_only: Calendar does not allow it, \
+            or the user lets Claude only read it), and which one new events go to by default.
+            """,
             Schema.object([:]), kind: .read
         ) { _ in
             let all = try self.backend.calendars()

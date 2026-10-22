@@ -47,6 +47,7 @@ extension CalendarToolbox {
                     return ToolReply(json: .obj([("undone", .string("created")), ("note", .string("The event was already gone."))]), summary: "already gone")
                 }
                 // An event Claude made and nobody changed since goes without asking; anything else follows the delete policy.
+                try self.requireWritable([current])
                 let untouched = current.title == made.title && current.start == made.start && current.end == made.end && !current.hasOtherAttendees
                 if !untouched { try await self.authorize(tool: "undo_change", deleting: true, events: [current]) }
                 try self.backend.delete(made.isRecurring ? series : made.ref, span: made.isRecurring ? .futureEvents : .thisEvent)
@@ -55,8 +56,12 @@ extension CalendarToolbox {
                 guard let before = record.before, let after = record.after else { throw ToolError("The journal entry is incomplete.") }
                 let ref = after.ref
                 let current = try self.event(ref)
+                try self.requireWritable([current])
                 var change = EventChange(restoring: before)
                 if before.calendarID == current.calendarID { change.calendarID = nil }
+                if let target = change.calendarID, self.settings.current.isReadOnly(target) {
+                    throw ToolError("It came from \(before.calendarTitle), which Claude may now only read (Apple Calendar MCP settings). Nothing was changed.")
+                }
                 if before.recurrence == current.recurrence {
                     change.recurrence = nil
                     change.removeRecurrence = false

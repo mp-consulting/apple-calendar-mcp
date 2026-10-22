@@ -743,23 +743,12 @@ struct SettingsTab: View {
         .padding(.horizontal, 16).padding(.vertical, 4)
         WeekdayPicker(selection: $model.settings.workdays).padding(.horizontal, 16).padding(.bottom, 4)
         SectionDivider()
-        SectionHeader("Calendars Claude can see") { Text("\(model.settings.visible(model.calendars).count) of \(model.calendars.count)") }
+        SectionHeader("What Claude can do with each calendar") { Text("\(model.settings.visible(model.calendars).count) of \(model.calendars.count) seen") }
         if model.calendars.isEmpty {
             Text("Allow Calendar access to choose.").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.vertical, 4)
         }
         ForEach(model.calendars) { calendar in
-            HStack(spacing: 8) {
-                Circle().fill(Color(hex: calendar.color)).frame(width: 8, height: 8)
-                Text(calendar.title).font(.callout)
-                Text(calendar.account + (calendar.writable ? "" : " · read-only")).font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Toggle("", isOn: Binding(
-                    get: { !model.settings.isHidden(calendar.id) },
-                    set: { model.settings.setHidden(calendar.id, !$0) }))
-                    .labelsHidden().toggleStyle(.switch).controlSize(.mini)
-            }
-            .padding(.horizontal, 16)
-            .frame(minHeight: 26)
+            CalendarAccessRow(model: model, calendar: calendar)
         }
         SectionDivider()
         SectionHeader("App")
@@ -775,6 +764,35 @@ struct SettingsTab: View {
             .font(.caption).foregroundStyle(.tertiary)
             .padding(.horizontal, 16).padding(.top, 8)
             .onChange(of: model.settings) { model.save() }
+    }
+}
+
+/// One calendar (or reminder list) and what Claude may do with it: change, only read, or not see.
+struct CalendarAccessRow: View {
+    @Bindable var model: AgentModel
+    let calendar: CalendarInfo
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle().fill(Color(hex: calendar.color)).frame(width: 8, height: 8)
+            Text(calendar.title).font(.callout).lineLimit(1)
+            Text(calendar.account).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            Spacer()
+            Picker("", selection: Binding(
+                get: { model.settings.access(calendar.id) == .read && !calendar.writable ? .change : model.settings.access(calendar.id) },
+                set: { model.settings.setAccess(calendar.id, $0) }))
+            {
+                Text(calendar.writable ? "Read and change" : "Read (read-only)").tag(Settings.CalendarAccess.change)
+                if calendar.writable { Text("Read only").tag(Settings.CalendarAccess.read) }
+                Text("Hidden").tag(Settings.CalendarAccess.hidden)
+            }
+            .labelsHidden()
+            .controlSize(.small)
+            .fixedSize()
+            .accessibilityLabel("Claude's access to \(calendar.title)")
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: 26)
     }
 }
 
