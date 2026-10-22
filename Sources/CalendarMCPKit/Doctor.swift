@@ -42,6 +42,10 @@ public enum Doctor {
                         detail: "\(calendars.count) in \(Set(calendars.map(\.account)).count) accounts"
                             + (hidden == 0 ? "" : ", \(hidden) hidden from Claude")))
                 }
+                let reminders = BridgeBackend(client: client).reminderAccess()
+                checks.append(Check(
+                    name: "Reminders access", state: reminders == .granted ? .ok : .warning,
+                    detail: reminders == .granted ? "granted to the app" : "optional: " + EventKitBackend.explainReminders(reminders)))
             } else {
                 let installed = LaunchContext.appURL()
                 checks.append(Check(

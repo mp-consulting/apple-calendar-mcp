@@ -22,10 +22,12 @@ public struct ApprovalRequest: Codable, Sendable, Hashable, Identifiable {
     public var attendees: [String]
     /// What changes, when it is a change ("Moves to Wed 22 Oct 10:00").
     public var detail: String?
+    /// What is asked about when it is not events: "reminder".
+    public var subject: String?
 
     public init(
         id: UUID = UUID(), created: Date = Date(), tool: String, client: String?, kind: Kind, title: String, items: [String],
-        attendees: [String] = [], detail: String? = nil
+        attendees: [String] = [], detail: String? = nil, subject: String? = nil
     ) {
         self.id = id
         self.created = created
@@ -36,6 +38,7 @@ public struct ApprovalRequest: Codable, Sendable, Hashable, Identifiable {
         self.items = items
         self.attendees = attendees
         self.detail = detail
+        self.subject = subject
     }
 }
 

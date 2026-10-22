@@ -524,7 +524,8 @@ struct ApprovalBlock: View {
             }
             HStack {
                 if request.kind == .delete {
-                    Text("Calendar has no Trash; undo_change can bring it back.").font(.caption2).foregroundStyle(.secondary)
+                    Text(request.subject == nil ? "Calendar has no Trash; undo_change can bring it back." : "undo_change can bring it back.")
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button(wording.no, role: .cancel) { decide(false) }.glassButton()
@@ -751,6 +752,22 @@ struct SettingsTab: View {
             CalendarAccessRow(model: model, calendar: calendar)
         }
         SectionDivider()
+        SectionHeader("Reminders") {
+            if model.reminderAccess.canRead { Text("\(model.settings.visible(model.reminderLists).count) of \(model.reminderLists.count) seen") }
+        }
+        switch model.reminderAccess {
+        case .granted:
+            ForEach(model.reminderLists) { list in CalendarAccessRow(model: model, calendar: list) }
+        case .notDetermined:
+            Row(systemImage: "checklist", title: "Let Claude use Reminders", detail: "List, add and complete reminders. macOS asks once.") {
+                Button("Allow…") { Task { await model.requestReminderAccess() } }.glassButton().controlSize(.small)
+            }
+        case .writeOnly, .denied, .restricted, .unavailable:
+            Row(systemImage: "checklist", title: "Reminders access is off", detail: "Turn on Full Access in Privacy & Security › Reminders.") {
+                Button("Open Settings…") { model.openPrivacySettings("Privacy_Reminders") }.glassButton().controlSize(.small)
+            }
+        }
+        SectionDivider()
         SectionHeader("App")
         SettingRow("Show the next event in the menu bar") { Toggle("", isOn: $model.settings.showNextEventInMenuBar).labelsHidden() }
         SettingRow("Check for updates every day") {
@@ -908,6 +925,7 @@ struct SettingsView: View {
             }
             Section("Calendar access") {
                 LabeledContent("Status") { Text(EventKitBackend.explain(model.access)) }
+                LabeledContent("Reminders") { Text(EventKitBackend.explainReminders(model.reminderAccess)) }
                 Button("Open Privacy & Security › Calendars…") { model.openCalendarPrivacySettings() }
             }
         }

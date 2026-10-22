@@ -16,6 +16,8 @@ final class AgentModel {
     var settings: Settings
     var access: AccessState = .notDetermined
     var calendars: [CalendarInfo] = []
+    var reminderAccess: AccessState = .notDetermined
+    var reminderLists: [CalendarInfo] = []
     /// Today's events from the visible calendars, declined and cancelled ones left out.
     var today: [Event] = []
     var activity: [ActivityEntry] = []
@@ -122,7 +124,7 @@ final class AgentModel {
                 if !self.demo { self.refreshActivity() }
                 if tick % 15 == 0 {
                     // Changes and the day turning are observed; only the permission is polled.
-                    if self.backend.access() != self.access { self.refreshCalendar() }
+                    if self.backend.access() != self.access || self.backend.reminderAccess() != self.reminderAccess { self.refreshCalendar() }
                     if !self.demo { self.refreshClientsInBackground() }
                     self.launchAtLogin = SMAppService.mainApp.status == .enabled
                 }
@@ -133,6 +135,18 @@ final class AgentModel {
     }
 
     // MARK: Calendar access and the bridge
+
+    /// Reminders are optional: asked for only when the user turns them on in Settings.
+    func requestReminderAccess() async {
+        guard let eventKit = backend as? EventKitBackend else { return }
+        if EventKitBackend.authorization(for: .reminder) == .denied {
+            openPrivacySettings("Privacy_Reminders")
+            return
+        }
+        NSApp.activate()
+        reminderAccess = await eventKit.requestReminderAccess()
+        refreshCalendar()
+    }
 
     func requestCalendarAccess() async {
         guard let eventKit = backend as? EventKitBackend else { return }
@@ -188,22 +202,31 @@ final class AgentModel {
         var access: AccessState
         var calendars: [CalendarInfo]
         var today: [Event]
+        var reminderAccess: AccessState
+        var reminderLists: [CalendarInfo]
     }
 
     private nonisolated static func calendarSnapshot(_ backend: any CalendarBackend, _ settings: Settings, _ now: Date) -> CalendarSnapshot {
         let access = backend.access()
-        guard access.canRead else { return CalendarSnapshot(access: access, calendars: [], today: []) }
+        let reminderAccess = backend.reminderAccess()
+        let lists = reminderAccess.canRead ? (try? backend.reminderLists()) ?? [] : []
+        guard access.canRead else {
+            return CalendarSnapshot(access: access, calendars: [], today: [], reminderAccess: reminderAccess, reminderLists: lists)
+        }
         let start = Calendar.current.startOfDay(for: now)
         let end = Calendar.current.date(byAdding: .day, value: 1, to: start)!
         return CalendarSnapshot(
             access: access, calendars: (try? backend.calendars()) ?? [],
-            today: settings.visible((try? backend.events(in: start, end)) ?? []).filter(\.isAttended))
+            today: settings.visible((try? backend.events(in: start, end)) ?? []).filter(\.isAttended), reminderAccess: reminderAccess,
+            reminderLists: lists)
     }
 
     private func apply(_ snapshot: CalendarSnapshot) {
         if snapshot.access != access { access = snapshot.access }
         if snapshot.calendars != calendars { calendars = snapshot.calendars }
         if snapshot.today != today { today = snapshot.today }
+        if snapshot.reminderAccess != reminderAccess { reminderAccess = snapshot.reminderAccess }
+        if snapshot.reminderLists != reminderLists { reminderLists = snapshot.reminderLists }
     }
 
     // MARK: Approvals
@@ -419,8 +442,10 @@ final class AgentModel {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    func openCalendarPrivacySettings() {
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")!)
+    func openCalendarPrivacySettings() { openPrivacySettings("Privacy_Calendars") }
+
+    func openPrivacySettings(_ pane: String) {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")!)
     }
 
     func open(_ event: Event) {

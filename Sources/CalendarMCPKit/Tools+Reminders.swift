@@ -284,7 +284,7 @@ extension CalendarToolbox {
         }
         try await ask(ApprovalRequest(
             tool: tool, client: clientName, kind: .delete, title: reminders.count == 1 ? reminders[0].title : "\(reminders.count) reminders",
-            items: Self.lines(reminders.map(\.summaryLine))))
+            items: Self.lines(reminders.map(\.summaryLine)), subject: "reminder"))
     }
 
     // MARK: Undo
