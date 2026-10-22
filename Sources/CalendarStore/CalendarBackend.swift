@@ -11,6 +11,9 @@ public protocol CalendarBackend: Sendable {
     func create(_ draft: EventDraft) throws -> Event
     func update(_ ref: EventRef, _ change: EventChange, span: Span) throws -> Event
     func delete(_ ref: EventRef, span: Span) throws
+    /// Answers an invitation to `ref` as the user (Calendar sends the answer to the organizer), or with `dryRun` only
+    /// says whether it can.
+    func respond(_ ref: EventRef, _ answer: InvitationAnswer) throws -> InvitationResult
     /// Grows whenever the calendar database changes (in this process or elsewhere).
     func changeCount() -> Int
 }

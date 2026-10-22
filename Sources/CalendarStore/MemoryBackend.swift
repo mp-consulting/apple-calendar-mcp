@@ -189,6 +189,28 @@ public final class MemoryBackend: CalendarBackend, @unchecked Sendable {
 
     // MARK: Helpers (under the lock)
 
+    /// Answers for the whole series (memory events have no per-occurrence answers).
+    public func respond(_ ref: EventRef, _ answer: InvitationAnswer) throws -> InvitationResult {
+        try lock.withLock {
+            try checkAccess()
+            guard var item = series[ref.eventID] else { throw CalendarError.notFound(ref) }
+            let current = try occurrence(ref)
+            let invited = current.organizer?.isCurrentUser == false && current.attendees.contains(where: \.isCurrentUser)
+            let check = InvitationCheck(supported: true, allowsStatusChange: invited, allowsComment: invited, appliesToAll: true)
+            guard !answer.dryRun else { return InvitationResult(event: current, check: check, answered: false) }
+            guard invited else { throw CalendarError("\"\(current.title)\" is not an invitation you can answer.") }
+            item.event.attendees = item.event.attendees.map { person in
+                var person = person
+                if person.isCurrentUser { person.status = answer.status }
+                return person
+            }
+            item.event.modified = Date()
+            series[ref.eventID] = item
+            changes += 1
+            return InvitationResult(event: try occurrence(ref), check: check, answered: true)
+        }
+    }
+
     private func checkAccess() throws {
         guard state == .granted else { throw CalendarError("No calendar access (\(state)).") }
     }

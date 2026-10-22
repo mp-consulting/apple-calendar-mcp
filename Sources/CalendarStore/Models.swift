@@ -37,7 +37,7 @@ public enum EventStatus: String, Codable, Sendable {
     case none, confirmed, tentative, cancelled
 }
 
-/// One person (or room) invited to an event. EventKit reads these; it cannot add or answer invitations.
+/// One person (or room) invited to an event. EventKit reads these; it cannot invite people.
 public struct Participant: Codable, Sendable, Hashable {
     public enum Status: String, Codable, Sendable {
         case unknown, pending, accepted, declined, tentative, delegated, completed, inProcess
@@ -410,5 +410,52 @@ public enum DayFormat {
         let parts = string.split(separator: "-").compactMap { Int($0) }
         guard parts.count == 3, string.count == 10 else { return nil }
         return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
+    }
+}
+
+/// The user's answer to an invitation.
+public struct InvitationAnswer: Codable, Sendable, Hashable {
+    public var status: Participant.Status
+    public var comment: String?
+    public var span: Span
+    /// Only check what Calendar allows; change nothing.
+    public var dryRun: Bool
+
+    public init(status: Participant.Status, comment: String? = nil, span: Span = .thisEvent, dryRun: Bool = false) {
+        self.status = status
+        self.comment = comment
+        self.span = span
+        self.dryRun = dryRun
+    }
+}
+
+/// What Calendar allows for answering one invitation (nil: it did not say).
+public struct InvitationCheck: Codable, Sendable, Hashable {
+    /// Whether this macOS has the (undocumented) EventKit calls for answering.
+    public var supported: Bool
+    public var allowsStatusChange: Bool?
+    public var allowsComment: Bool?
+    /// The answer covers every occurrence of a repeating event, whatever the span.
+    public var appliesToAll: Bool?
+
+    public init(supported: Bool, allowsStatusChange: Bool? = nil, allowsComment: Bool? = nil, appliesToAll: Bool? = nil) {
+        self.supported = supported
+        self.allowsStatusChange = allowsStatusChange
+        self.allowsComment = allowsComment
+        self.appliesToAll = appliesToAll
+    }
+
+    public var answerable: Bool { supported && allowsStatusChange != false }
+}
+
+public struct InvitationResult: Codable, Sendable, Hashable {
+    public var event: Event
+    public var check: InvitationCheck
+    public var answered: Bool
+
+    public init(event: Event, check: InvitationCheck, answered: Bool) {
+        self.event = event
+        self.check = check
+        self.answered = answered
     }
 }

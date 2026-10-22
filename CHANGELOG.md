@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `respond_to_invitation`: accept, decline or answer "maybe" to an invitation (with `dry_run` to check first).
+  Calendar sends the answer to the organizer. The menu bar app asks first, as for other changes to shared events.
+
 ## [0.1.3] - 2026-10-22
 
 ### Changed

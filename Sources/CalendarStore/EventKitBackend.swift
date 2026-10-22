@@ -198,6 +198,49 @@ public final class EventKitBackend: CalendarBackend, @unchecked Sendable {
         }
     }
 
+    // MARK: Invitations
+
+    /// EventKit has no public call for answering an invitation; Calendar uses `-[EKEvent setParticipationStatus:]`
+    /// and the account sends the answer to the organizer when the event is saved (checked with Google and iCloud,
+    /// macOS 27). Each call is checked with `responds(to:)` first. `canBeRespondedTo` is false for invitations that
+    /// can be answered this way, so it is not consulted: `allowsParticipationStatusModifications` is the gate.
+    public func respond(_ ref: EventRef, _ answer: InvitationAnswer) throws -> InvitationResult {
+        try withStore { store in
+            guard let event = try Self.find(ref, in: store) else { throw CalendarError.notFound(ref) }
+            let check = Self.invitationCheck(event)
+            guard !answer.dryRun else { return InvitationResult(event: Self.event(event), check: check, answered: false) }
+            guard check.supported else { throw CalendarError("This version of macOS does not let apps answer invitations; answer it in Calendar.") }
+            guard check.answerable else { throw CalendarError("Calendar does not allow changing your answer to \"\(event.title ?? "")\".") }
+            let status: EKParticipantStatus = switch answer.status {
+            case .accepted: .accepted
+            case .declined: .declined
+            case .tentative: .tentative
+            default: throw CalendarError("An answer is accepted, declined or tentative.")
+            }
+            event.setValue(NSNumber(value: status.rawValue), forKey: "participationStatus")
+            if let comment = answer.comment, check.allowsComment != false, event.responds(to: NSSelectorFromString("setResponseComment:")) {
+                event.setValue(comment.isEmpty ? nil : comment, forKey: "responseComment")
+            }
+            let span: EKSpan = check.appliesToAll == true ? .futureEvents : Self.ekSpan(answer.span, event)
+            do {
+                try store.save(event, span: span, commit: true)
+            } catch {
+                throw CalendarError("Calendar refused the answer: \(error.localizedDescription)")
+            }
+            return InvitationResult(event: Self.event(event), check: check, answered: true)
+        }
+    }
+
+    static func invitationCheck(_ event: EKEvent) -> InvitationCheck {
+        func flag(_ name: String) -> Bool? {
+            event.responds(to: NSSelectorFromString(name)) ? (event.value(forKey: name) as? NSNumber)?.boolValue : nil
+        }
+        return InvitationCheck(
+            supported: event.responds(to: NSSelectorFromString("setParticipationStatus:")),
+            allowsStatusChange: flag("allowsParticipationStatusModifications"),
+            allowsComment: flag("allowsResponseCommentModifications"), appliesToAll: flag("responseMustApplyToAll"))
+    }
+
     private static func ekSpan(_ span: Span, _ event: EKEvent) -> EKSpan {
         span == .futureEvents && (event.hasRecurrenceRules || event.isDetached) ? .futureEvents : .thisEvent
     }

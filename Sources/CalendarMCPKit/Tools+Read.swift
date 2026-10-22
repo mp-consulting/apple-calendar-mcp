@@ -335,7 +335,7 @@ extension CalendarToolbox {
         ToolDefinition(
             tool: Self.tool(
                 "pending_invitations", "Pending invitations",
-                "Invitations from other people you have not answered yet (default: from now to 60 days ahead). Answer them in Calendar: EventKit cannot.",
+                "Invitations from other people you have not answered yet (default: from now to 60 days ahead). Answer them with respond_to_invitation.",
                 Schema.object([
                     "start": Schema.string("From: \(Schema.date) (default: now)"),
                     "end": Schema.string("Until (default: 60 days after start)"),

@@ -3,7 +3,7 @@ import Foundation
 import MCP
 
 extension CalendarToolbox {
-    var changeTools: [ToolDefinition] { [createEvent, updateEvent, deleteEvent] }
+    var changeTools: [ToolDefinition] { [createEvent, updateEvent, deleteEvent, respondToInvitation] }
 
     static let repeatProperty: Value = .object([
         "type": "object",
@@ -301,5 +301,66 @@ extension CalendarToolbox {
                 ]),
                 summary: "deleted \(Self.plural(deleted.count, "event"))\(failures.isEmpty ? "" : ", \(failures.count) failed")")
         }
+    }
+
+    // MARK: respond_to_invitation
+
+    var respondToInvitation: ToolDefinition {
+        ToolDefinition(
+            tool: Self.tool(
+                "respond_to_invitation", "Answer invitation",
+                """
+                Accept, decline or answer "maybe" (tentative) to an invitation, as the user would in Calendar: Calendar \
+                sends the answer to the organizer. Asks the user first by default. Some repeating invitations can only be \
+                answered for the whole series. dry_run says whether the invitation can be answered here; when it cannot, \
+                offer open_in_calendar.
+                """,
+                Schema.object([
+                    "id": Schema.string("The event id (from pending_invitations); for one occurrence, its occurrence id"),
+                    "answer": Schema.string("The answer", enum: ["accepted", "declined", "tentative"]),
+                    "comment": Schema.string("A short note to the organizer, where the account supports one"),
+                    "span": Schema.string("For a repeating event: this occurrence only (default) or it and all later ones", enum: ["this", "future"]),
+                    "dry_run": Schema.boolean("Check whether it can be answered, without answering"),
+                ], required: ["id", "answer"]), kind: .change, idempotent: true),
+            kind: .change
+        ) { arguments in
+            try self.requireChanges()
+            let ref = try arguments.ref("id")
+            guard let status = Participant.Status(rawValue: try arguments.requiredString("answer").lowercased()),
+                  [.accepted, .declined, .tentative].contains(status)
+            else { throw ToolError("answer must be accepted, declined or tentative") }
+            let current = try self.event(ref)
+            guard current.myStatus != nil else {
+                throw ToolError("\"\(current.title)\" is not an invitation from someone else; there is nothing to answer.")
+            }
+            let answer = InvitationAnswer(status: status, comment: try arguments.string("comment"), span: try Self.span(arguments))
+            let check = try self.backend.respond(ref, InvitationAnswer(status: status, span: answer.span, dryRun: true)).check
+            let checkJSON = JSON.obj([
+                ("can_answer", .bool(check.answerable)), ("whole_series", check.appliesToAll == true && current.isRecurring ? .bool(true) : nil),
+                ("comment_supported", check.allowsComment.map(JSON.bool)),
+                ("why_not", check.answerable ? nil : .string(Self.whyNot(check))),
+            ])
+            if try arguments.bool("dry_run") == true {
+                return ToolReply(
+                    json: .obj([("dry_run", .bool(true)), ("event", Render.event(current)), ("check", checkJSON)]),
+                    summary: "dry run: 1 invitation", event: current)
+            }
+            guard check.answerable else {
+                throw ToolError("Calendar does not let apps answer \"\(current.title)\". Offer open_in_calendar to answer it there.")
+            }
+            let organizer = current.organizer?.formatted ?? "the organizer"
+            try await self.authorize(
+                tool: "respond_to_invitation", deleting: false, events: [current], detail: "Answers \(status.rawValue) to \(organizer).")
+            let result = try self.backend.respond(ref, answer)
+            return ToolReply(
+                json: .obj([
+                    ("answered", Render.event(result.event)), ("answer", .string(status.rawValue)), ("check", checkJSON),
+                ]),
+                summary: "answered 1 invitation", event: result.event)
+        }
+    }
+
+    static func whyNot(_ check: InvitationCheck) -> String {
+        check.supported ? "Calendar does not allow changing your answer to this event" : "this version of macOS has no way for apps to answer invitations"
     }
 }

@@ -102,6 +102,7 @@ this project's app. If the app is not running, the server opens it in the backgr
 | `find_free_time` | Slots of a given length within your working hours, with buffers, across every calendar that counts |
 | `find_conflicts` | Overlapping events that both take the time |
 | `pending_invitations` | Invitations you haven't answered |
+| `respond_to_invitation` | Accept, decline or answer "maybe" to an invitation; Calendar sends the answer to the organizer |
 | `calendar_statistics` | Where time went: per calendar, weekday, hour and person, meeting load, back-to-back meetings |
 | `list_calendars` | Calendars with their account, colour and whether they can be changed |
 | `create_event`, `update_event`, `delete_event` | Add, change, move or delete events, one occurrence or the whole series, with alarms and repeat rules |
@@ -111,8 +112,9 @@ this project's app. If the app is not running, the server opens it in the backgr
 
 Event ids are EventKit's own; one occurrence of a repeating event is `<id>#<start in Unix seconds>`.
 
-EventKit cannot invite people or answer invitations. Attendees and their answers are shown, and invitations are
-answered in Calendar.
+EventKit cannot invite people: invite them in Calendar. Invitations to you can be answered with
+`respond_to_invitation`, which uses the same (undocumented) EventKit call as Calendar; the account sends the answer
+to the organizer, and the app asks you first.
 
 ## You stay in control
 

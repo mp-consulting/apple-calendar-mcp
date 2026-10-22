@@ -213,6 +213,33 @@ func titles(_ list: Any?) -> [String] { (list as? [[String: Any]] ?? []).compact
         #expect(try harness.backend.event(review.ref)?.start == review.start)
     }
 
+    @Test func answeringAnInvitationAsksFirstAndUpdatesMyStatus() async throws {
+        let harness = try Harness()
+        let pending = try await harness.call("pending_invitations")
+        let id = try #require((pending["invitations"] as? [[String: Any]])?.first?["id"] as? String)
+        let check = try await harness.call("respond_to_invitation", ["id": .string(id), "answer": "accepted", "dry_run": true])
+        #expect((check["check"] as? [String: Any])?["can_answer"] as? Bool == true)
+        #expect(harness.approvals.requests.isEmpty)
+
+        harness.approvals.answer = .denied
+        #expect(await harness.failure("respond_to_invitation", ["id": .string(id), "answer": "accepted"]).contains("declined"))
+        #expect(try harness.backend.event(EventRef(id)!)?.myStatus == .pending)
+
+        harness.approvals.answer = .approved
+        let answered = try await harness.call("respond_to_invitation", ["id": .string(id), "answer": "tentative"])
+        #expect(answered["answer"] as? String == "tentative")
+        #expect(harness.approvals.requests.last?.detail?.contains("tentative") == true)
+        #expect(try harness.backend.event(EventRef(id)!)?.myStatus == .tentative)
+        #expect(titles(try await harness.call("pending_invitations")["invitations"]).isEmpty)
+    }
+
+    @Test func onlyInvitationsFromOthersCanBeAnswered() async throws {
+        let harness = try Harness()
+        let review = try #require(try harness.backend.events(in: day(20), day(21)).first { $0.title.hasPrefix("Design review") })
+        #expect(await harness.failure("respond_to_invitation", ["id": .string(review.id), "answer": "accepted"]).contains("nothing to answer"))
+        #expect(await harness.failure("respond_to_invitation", ["id": .string(review.id), "answer": "maybe"]).contains("accepted, declined or tentative"))
+    }
+
     @Test func oneOccurrenceOfARepeatingEvent() async throws {
         let harness = try Harness()
         let thursday = try #require(try harness.backend.events(in: day(22), day(23)).first { $0.title == "Team standup" })

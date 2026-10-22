@@ -44,7 +44,10 @@ APPLE_CALENDAR_MCP_SUPPORT_DIR=/tmp/acm-demo "…/Apple Calendar MCP.app/Content
   through the app.
 - Approvals travel over the bridge (no files, no Keychain key): deleting and changing events with other attendees
   ask first by default (`deletePolicy`, `sharedEventPolicy`).
-- EventKit cannot invite attendees or answer invitations. Say so in tools and skills; offer `open_in_calendar`.
+- EventKit cannot invite attendees. Say so in tools and skills; offer `open_in_calendar`.
+- Answering invitations (`respond_to_invitation`) uses Calendar's undocumented `-[EKEvent setParticipationStatus:]`,
+  each call behind `responds(to:)`; when it is missing the tool says so and offers `open_in_calendar`. This is the
+  one private API we use, in the app only (the server never touches EventKit's private side).
 - Tool output is compact JSON (`JSON.obj`, keys in a deliberate order, false/empty fields omitted).
 - Skills may only mention tools and parameters that exist (`SkillTests.skillsOnlyReferenceRealToolsAndParameters`).
 - **No Claude attribution in git.** Commit messages and pull request descriptions carry no `Co-Authored-By: Claude`
@@ -63,6 +66,9 @@ APPLE_CALENDAR_MCP_SUPPORT_DIR=/tmp/acm-demo "…/Apple Calendar MCP.app/Content
 - `predicateForEvents` answers at most four years per query (`events(in:_:)` chunks).
 - All-day events end at 23:59:59 of their last day; iCalendar ends them at the next midnight.
 - Calendar has no Trash for events: undo recreates a deleted event from the journal, without its attendees.
+- Answering: set `participationStatus` (KVC) and save; the account delivers the reply (checked: Google CalDAV
+  invitee, iCloud organizer). `canBeRespondedTo` is false even for answerable invitations: gate on
+  `allowsParticipationStatusModifications`. `allowsResponseCommentModifications` is false for Google.
 
 ## Releases
 

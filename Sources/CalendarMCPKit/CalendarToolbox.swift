@@ -83,7 +83,8 @@ public final class CalendarToolbox: @unchecked Sendable {
         strings; one occurrence of a repeating event is "<id>#<unix seconds>", as the tools return it. \
         create_event and update_event change the calendar right away (use dry_run to preview); deleting, and \
         changing events other people are invited to, may wait for the user's OK in the menu bar app. \
-        EventKit cannot invite people or answer invitations: say so and offer open_in_calendar.
+        respond_to_invitation accepts or declines an invitation, and Calendar sends the answer to the organizer. \
+        EventKit cannot invite people: say so and offer open_in_calendar.
         """
 
     // MARK: Calendars

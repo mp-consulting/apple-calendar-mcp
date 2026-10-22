@@ -64,5 +64,6 @@ public struct UnavailableBackend: CalendarBackend {
     public func create(_ draft: EventDraft) throws -> Event { throw CalendarError(reason) }
     public func update(_ ref: EventRef, _ change: EventChange, span: Span) throws -> Event { throw CalendarError(reason) }
     public func delete(_ ref: EventRef, span: Span) throws { throw CalendarError(reason) }
+    public func respond(_ ref: EventRef, _ answer: InvitationAnswer) throws -> InvitationResult { throw CalendarError(reason) }
     public func changeCount() -> Int { 0 }
 }

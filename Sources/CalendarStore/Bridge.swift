@@ -103,6 +103,7 @@ enum BridgeRequest: Codable, Sendable {
     case create(EventDraft)
     case update(EventRef, EventChange, Span)
     case delete(EventRef, Span)
+    case respond(EventRef, InvitationAnswer)
     case changeCount
     case approve(ApprovalRequest, timeout: TimeInterval)
 }
@@ -117,6 +118,7 @@ struct BridgeResponse: Codable, Sendable {
     var event: Event?
     var count: Int?
     var decision: ApprovalDecision?
+    var invitation: InvitationResult?
 }
 
 /// Who answers at the other end.
@@ -304,6 +306,7 @@ public final class BridgeHost: @unchecked Sendable {
             case let .delete(ref, span):
                 try backend.delete(ref, span: span)
                 return BridgeResponse()
+            case let .respond(ref, answer): return BridgeResponse(invitation: try backend.respond(ref, answer))
             case .changeCount: return BridgeResponse(count: backend.changeCount())
             case let .approve(approval, timeout):
                 let box = DecisionBox()
@@ -449,6 +452,18 @@ public final class BridgeBackend: CalendarBackend, @unchecked Sendable {
     }
 
     public func delete(_ ref: EventRef, span: Span) throws { _ = try client.send(.delete(ref, span)) }
+
+    public func respond(_ ref: EventRef, _ answer: InvitationAnswer) throws -> InvitationResult {
+        let older = CalendarError("The menu bar app is older than this server and cannot answer invitations; update it.")
+        let response: BridgeResponse
+        do {
+            response = try client.send(.respond(ref, answer))
+        } catch let error as CalendarError where error.description == "unreadable request" {
+            throw older
+        }
+        guard let result = response.invitation else { throw older }
+        return result
+    }
 
     public func changeCount() -> Int { (try? client.send(.changeCount, timeout: 5).count) ?? 0 }
 }

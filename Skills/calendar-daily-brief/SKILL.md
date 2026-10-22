@@ -25,12 +25,14 @@ reads come from EventKit through the menu bar app and never change anything.
 4. **Offer actions**, then wait for the user to choose:
    - move or shorten an event (`update_event`), block focus time in a gap (the `calendar-focus-time` skill),
    - prepare a meeting (the `calendar-meeting-prep` skill),
-   - open something in Calendar (`open_in_calendar`), for example to answer an invitation there.
+   - answer an invitation (`respond_to_invitation`: accepted, declined or tentative),
+   - open something in Calendar (`open_in_calendar`).
 
 ## Rules
 
 - Change nothing during the brief. Every change waits for the user's yes.
-- Invitations are answered in Calendar: EventKit cannot accept or decline. Say so and offer `open_in_calendar`.
+- Answering an invitation sends the answer to the organizer: do it only when the user says which answer. If
+  `respond_to_invitation` says Calendar does not allow it, offer `open_in_calendar`.
 - All-day events (holidays, birthdays, travel) go on one line at the top, not in the timeline.
 - Times are the user's local time; mention a meeting's own time zone only when it differs.
 - If `agenda` reports that calendar access is missing or the app is not running, tell the user to open
