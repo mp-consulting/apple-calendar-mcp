@@ -14,6 +14,7 @@
   <img alt="macOS 14+, Apple silicon and Intel" src="https://img.shields.io/badge/macOS-14%2B%20%C2%B7%20universal-blue">
   <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6-orange">
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-green"></a>
+  <a href="https://mcpservers.org/servers/mp-consulting/apple-calendar-mcp"><img alt="Listed on mcpservers.org" src="https://mcpservers.org/badge.svg"></a>
 </p>
 
 Apple Calendar MCP is an [MCP](https://modelcontextprotocol.io) server for the Calendar app on your Mac, plus a
