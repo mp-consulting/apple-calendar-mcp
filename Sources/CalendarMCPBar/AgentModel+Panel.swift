@@ -121,11 +121,17 @@ extension AgentModel {
     }
 
     /// A dot on the Claude tab: a client to connect or restart, or skills not added yet.
+    /// claude.ai has connected through the remote server: the Claude apps on the same account reach Calendar that way.
+    var usesClaudeAI: Bool { settings.remoteAccess && !remote.apps.isEmpty }
+
     var claudeNeedsAction: Bool {
+        if case .failed = remote.status, settings.remoteAccess { return true }
         let code = clientStatus[.claudeCode] ?? .notInstalled
         let app = clientStatus[.claudeDesktop] ?? .notInstalled
-        let codeTodo = code != .installed && code != .clientMissing
-        let appTodo = app != .installed && app != .clientMissing || claudeAppNeedsRestart
+        // With claude.ai connected, the local setups are optional and ask for nothing.
+        let local = !usesClaudeAI
+        let codeTodo = local && code != .installed && code != .clientMissing
+        let appTodo = (local && app != .installed && app != .clientMissing) || claudeAppNeedsRestart
         return codeTodo || appTodo || (code == .installed && installedSkillCount == 0)
     }
 
@@ -196,7 +202,7 @@ extension AgentModel {
             let skills = installedSkillCount
             return skills == 0 ? "Server connected · no skills yet" : "Server connected · \(plural(skills, "skill"))"
         case .otherCommand: return "Uses another calendar server; connect to switch"
-        case .notInstalled: return "Adds the server and the skills"
+        case .notInstalled: return usesClaudeAI ? "Not needed: uses claude.ai" : "Adds the server and the skills"
         case .clientMissing: return "Claude Code isn't installed"
         }
     }
@@ -206,7 +212,9 @@ extension AgentModel {
         case .installed:
             return claudeAppNeedsRestart ? "Added. Restart Claude to load it." : "Server connected · skills: switch below to Claude app"
         case .otherCommand: return "Uses another calendar server; connect to switch"
-        case .notInstalled: return "Adds the server; Claude needs a restart"
+        case .notInstalled:
+            if claudeAppNeedsRestart { return "Removed. Restart Claude to unload the local server." }
+            return usesClaudeAI ? "Not needed: uses claude.ai" : "Adds the server; Claude needs a restart"
         case .clientMissing: return "The Claude app isn't installed"
         }
     }
