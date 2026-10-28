@@ -7,6 +7,9 @@ public struct ApprovalRequest: Codable, Sendable, Hashable, Identifiable {
         case delete
         /// Change events other people are invited to: their calendar server may tell them.
         case notify
+        /// Connect a remote MCP client (claude.ai) over OAuth; `title` names the app, `items` what it may do,
+        /// `detail` where approving sends the browser.
+        case connect
     }
 
     public var id: UUID

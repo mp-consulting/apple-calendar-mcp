@@ -748,6 +748,7 @@ struct SettingsTab: View {
         SettingRow("Events per change, at most") {
             Stepper("\(model.settings.maxBatchSize)", value: $model.settings.maxBatchSize, in: 1...500).fixedSize()
         }
+        RemoteRow(model: model)
         SectionDivider()
         SectionHeader("Working hours") { Text("for free time") }
         HStack(spacing: 10) {
@@ -938,6 +939,7 @@ struct SettingsView: View {
                     Button("Copy Claude app config") { model.copy(model.desktopConfig) }
                 }
             }
+            RemoteSection(model: model)
             Section("Calendar access") {
                 LabeledContent("Status") { Text(EventKitBackend.explain(model.access)) }
                 LabeledContent("Reminders") { Text(EventKitBackend.explainReminders(model.reminderAccess)) }

@@ -54,6 +54,9 @@ final class AgentModel {
     var openApprovalWindow: (() -> Void)?
     var closeApprovalWindow: (() -> Void)?
 
+    /// The remote server for claude.ai, while Settings › Remote access is on.
+    let remote = RemoteHost()
+
     /// The time the panel shows (the demo fixes it so screenshots always show a busy morning).
     let clock: () -> Date
 
@@ -64,6 +67,11 @@ final class AgentModel {
             backend = StandardFixture.backend(now: morning)
             clock = { morning }
             settings = Settings()
+            if CommandLine.arguments.contains("--remote") {
+                settings.remoteAccess = true
+                settings.remoteAddress = "https://mcp.example.com/sam/calendar"
+                settings.remotePort = 8591
+            }
         } else {
             backend = EventKitBackend()
             clock = { Date() }
@@ -99,6 +107,7 @@ final class AgentModel {
             updater.checkSignature()
             refreshClients()
             loadDemoActivity()
+            if let address = RemoteServer.Address(settings.remoteAddress), settings.remoteAccess { remote.loadDemo(resource: address.resource) }
         } else {
             // First, so a server that just opened the app finds the socket soon.
             startBridge()
@@ -121,7 +130,10 @@ final class AgentModel {
             var tick = 0
             while !Task.isCancelled {
                 guard let self else { return }
-                if !self.demo { self.refreshActivity() }
+                if !self.demo {
+                    self.refreshActivity()
+                    self.remote.apply(self.settings, serverPath: self.serverPath)
+                }
                 if tick % 15 == 0 {
                     // Changes and the day turning are observed; only the permission is polled.
                     if self.backend.access() != self.access || self.backend.reminderAccess() != self.reminderAccess { self.refreshCalendar() }
@@ -413,6 +425,7 @@ final class AgentModel {
         do {
             try settings.save()
             if lastError?.hasPrefix("Could not save settings") == true { lastError = nil }
+            remote.apply(settings, serverPath: serverPath)
         } catch {
             lastError = "Could not save settings: \(error.localizedDescription)"
         }

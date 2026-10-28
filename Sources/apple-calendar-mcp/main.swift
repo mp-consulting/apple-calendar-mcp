@@ -10,6 +10,10 @@ let usage = """
     USAGE
       apple-calendar-mcp [--read-only] [--demo]
           Serve MCP over stdio (what MCP clients run).
+      apple-calendar-mcp remote [--port N] [--listen ADDRESS] [--address URL]
+          Serve MCP over HTTP with OAuth, for claude.ai through a tunnel (the menu bar app runs this when
+          Settings › Remote access is on). URL is the address the tunnel publishes, e.g.
+          https://mcp.example.com/me/calendar; defaults come from the settings.
       apple-calendar-mcp doctor
           Check the menu bar app, the Calendars permission and the bridge.
       apple-calendar-mcp install [claude-code | claude-desktop | all]
@@ -90,6 +94,50 @@ switch command {
 case nil, "serve":
     watchParent()
     try await CalendarMCPServer.runStdio(toolbox: makeToolbox(demo: demo, readOnly: readOnly, settings: settings))
+
+case "remote":
+    // Started by the menu bar app: ends with it.
+    if ProcessInfo.processInfo.environment["APPLE_CALENDAR_MCP_REMOTE_CHILD"] != nil { watchParent() }
+    var current = settings.current
+    var options = rest[...]
+    while let option = options.popFirst() {
+        guard let value = options.popFirst() else { fail("\(option) needs a value") }
+        switch option {
+        case "--port": current.remotePort = Int(value) ?? 0
+        case "--listen": current.remoteListen = value
+        case "--address": current.remoteAddress = value
+        default: fail("unknown option \(option)")
+        }
+    }
+    guard let address = RemoteServer.Address(current.remoteAddress) else {
+        fail("Set the public address first (Settings › Remote access, or --address https://mcp.example.com/me/calendar).")
+    }
+    guard let port = UInt16(exactly: current.remotePort), port > 0 else { fail("--port is 1 to 65535") }
+    let isDemo = demo
+    let approveAll: Approver = { @Sendable _, _ in .approved }
+    let approver: Approver = isDemo ? approveAll : LaunchContext.approver()
+    let server = RemoteServer(
+        address: address, access: RemoteAccess(), settings: settings,
+        askApproval: approver,
+        appRunning: { isDemo || ((try? LaunchContext.bridgeClient())?.isAppRunning ?? false) }
+    ) { sessionReadOnly in
+        makeToolbox(demo: isDemo, readOnly: isReadOnly || sessionReadOnly, settings: settings)
+    }
+    let listener = try HTTPListener(host: current.remoteListen, port: port) { await server.handle($0) }
+    do {
+        try await listener.start()
+    } catch {
+        fail("apple-calendar-mcp: cannot listen on port \(port): \(error)")
+    }
+    FileHandle.standardError.write(Data("apple-calendar-mcp \(CalendarMCPVersion.build): serving \(address.resource) on port \(port)\n".utf8))
+    signal(SIGTERM, SIG_IGN)
+    let termination = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    termination.setEventHandler {
+        listener.stop()
+        exit(0)
+    }
+    termination.resume()
+    while true { try await Task.sleep(nanoseconds: 3_600_000_000_000) }
 
 case "doctor":
     print(await Doctor.report(settings: settings.current))

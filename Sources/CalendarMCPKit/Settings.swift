@@ -60,6 +60,16 @@ public struct Settings: Codable, Sendable, Equatable {
     /// Show the next event's time and title next to the menu bar icon.
     public var showNextEventInMenuBar = false
 
+    /// Serve MCP over HTTP for claude.ai and the Claude apps (through a tunnel such as cloudflared), with OAuth.
+    public var remoteAccess = false
+    /// The address clients use, as published by the tunnel: `https://mcp.example.com/me/calendar`. Its path is where
+    /// the server answers, and the metadata's issuer and endpoints are built from it.
+    public var remoteAddress = ""
+    /// The local port the tunnel forwards to.
+    public var remotePort = 8591
+    /// The interface to listen on: empty for every one (a tunnel on another machine), `127.0.0.1` for one on this Mac.
+    public var remoteListen = ""
+
     public init() {}
 
     /// What applies when the settings file exists but cannot be read: nothing is changed or deleted until the user
@@ -101,6 +111,10 @@ public struct Settings: Codable, Sendable, Equatable {
         checkForUpdates = field(.checkForUpdates, defaults.checkForUpdates)
         updateInstalledSkills = field(.updateInstalledSkills, defaults.updateInstalledSkills)
         showNextEventInMenuBar = field(.showNextEventInMenuBar, defaults.showNextEventInMenuBar)
+        remoteAccess = field(.remoteAccess, defaults.remoteAccess)
+        remoteAddress = field(.remoteAddress, defaults.remoteAddress)
+        remotePort = field(.remotePort, defaults.remotePort)
+        remoteListen = field(.remoteListen, defaults.remoteListen)
     }
 
     /// The defaults when there is no file; `failClosed` when the file exists but is not valid settings JSON.

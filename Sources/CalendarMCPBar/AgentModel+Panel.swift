@@ -42,6 +42,8 @@ struct ApprovalWording {
             self.init(question: question, yes: "Delete", no: "Don't")
         case .notify:
             self.init(question: "CHANGE A SHARED EVENT?", yes: "Change", no: "Don't")
+        case .connect:
+            self.init(question: "CONNECT TO YOUR CALENDAR?", yes: "Allow", no: "Deny")
         }
     }
 

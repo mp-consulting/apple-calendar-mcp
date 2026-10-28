@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Remote access for claude.ai and the Claude apps.** `apple-calendar-mcp remote` serves MCP over HTTP (Streamable
+  HTTP) with OAuth 2.1: client registration, PKCE, rotated refresh tokens, revocation. It answers under the path of
+  its public address (`https://mcp.example.com/me/calendar`), discovery documents included, so several servers can
+  share one host name behind one tunnel. Connections are approved on a sign-in page with a passcode, or with Allow
+  in the menu bar app (over the bridge); each may be read-only, and deleting and changing shared events still ask.
+- Settings › Remote access: turn it on, the address, port and interface, the passcode, the connector URL and the
+  tunnel's path pattern, and the connected apps with Disconnect. The menu bar app runs and restarts the server.
+
 ## [0.3.0] - 2026-10-22
 
 ### Added

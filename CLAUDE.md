@@ -8,9 +8,9 @@ An MCP server for Apple Calendar in Swift, plus a menu bar app. The companion of
 | Target | What it is |
 |---|---|
 | `CalendarStore` | Models, `CalendarBackend` (EventKit, memory, bridge), repeat rules, free time, conflicts, statistics, iCalendar |
-| `CalendarMCPKit` | MCP tools (`Tools+*.swift`), settings and policies, undo journal, activity log, path guard, skills, installer, doctor |
-| `apple-calendar-mcp` | The server and CLI (`serve`, `doctor`, `install`, `skills`, `call`, `--demo`) |
-| `CalendarMCPBar` | The menu bar app (SwiftUI, as Apple Mail MCP's): bridge host, approvals, today, activity, Claude setup, settings, updater |
+| `CalendarMCPKit` | MCP tools (`Tools+*.swift`), settings and policies, undo journal, activity log, path guard, skills, installer, doctor; `Remote/`: the HTTP server for claude.ai, as Apple Mail MCP's (`HTTPListener`, `RemoteServer` under the public address's path, `RemoteAccess` OAuth in `remote-access.json`, `AuthorizePage`; connect approvals over the bridge); docs/remote.md |
+| `apple-calendar-mcp` | The server and CLI (`serve`, `remote`, `doctor`, `install`, `skills`, `call`, `--demo`) |
+| `CalendarMCPBar` | The menu bar app (SwiftUI, as Apple Mail MCP's): bridge host, approvals, today, activity, Claude setup, settings, updater; `RemoteHost` runs `apple-calendar-mcp remote` while remote access is on |
 | `CalendarFixtures` | The made-up demo week (tests, `--demo`, screenshots) |
 | `Skills/` | The Claude skills, one `SKILL.md` each; embedded into the binary |
 

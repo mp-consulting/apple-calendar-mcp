@@ -27,7 +27,7 @@ The companion of [Apple Mail MCP](https://github.com/mp-consulting/apple-mail-mc
 <p align="center">
   <picture><source media="(prefers-color-scheme: light)" srcset="docs/images/tab-calendar-light.png"><img src="docs/images/tab-calendar.png" width="300" alt="Calendar tab: a shared event change waiting for approval, two more requests below, today's events with what is on now and next, recent activity"></picture>
   <picture><source media="(prefers-color-scheme: light)" srcset="docs/images/tab-claude-light.png"><img src="docs/images/tab-claude.png" width="300" alt="Claude tab: Claude Code and the Claude app, the nine skills by slash command"></picture>
-  <picture><source media="(prefers-color-scheme: light)" srcset="docs/images/tab-settings-light.png"><img src="docs/images/tab-settings.png" width="300" alt="Settings tab: delete and shared-event policies, working hours, what Claude may do with each calendar and reminder list"></picture>
+  <picture><source media="(prefers-color-scheme: light)" srcset="docs/images/tab-settings-light.png"><img src="docs/images/tab-settings.png" width="300" alt="Settings tab: delete and shared-event policies, remote access for claude.ai, working hours, what Claude may do with each calendar and reminder list"></picture>
 </p>
 
 ## Any calendar account, ready for AI
@@ -96,6 +96,35 @@ this project's app. If the app is not running, the server opens it in the backgr
 |---|---|---|
 | **Calendars › Full Access** for Apple Calendar MCP | Read and change events | Asked once by the app; System Settings › Privacy & Security › Calendars |
 | **Reminders › Full Access** (optional) | Read, add and complete reminders | Asked when you turn Reminders on in the app's Settings tab; System Settings › Privacy & Security › Reminders |
+
+## claude.ai and your phone
+
+The Claude apps on iPhone, Android and the web reach Calendar on your Mac as a **custom connector**. The menu bar
+app serves MCP over HTTP with OAuth; a tunnel (such as cloudflared) publishes it at an HTTPS address of yours.
+Turn it on in **More settings… › Remote access**:
+
+<p align="center">
+  <picture><source media="(prefers-color-scheme: light)" srcset="docs/images/settings-remote-light.png"><img src="docs/images/settings-remote.png" width="460" alt="Remote access settings: public address, port, status, connector URL, tunnel route, passcode, and two connected Claude apps with Disconnect"></picture>
+</p>
+
+1. Enter the **public address** the tunnel publishes, such as `https://mcp.example.com/me/calendar`. Several
+   servers can share one host name, each on its own path (Apple Mail MCP at `/me/mail`, for instance).
+2. Route that path to the port (8591 by default) in the tunnel. The route must also carry the discovery documents,
+   which OAuth puts at the root with the path appended; the settings show the exact path pattern, for example
+   `^/(\.well-known/[^/]+/)?me/calendar(/.*)?$`.
+3. Set a **passcode** to approve connections from anywhere, or approve them in the menu bar app.
+4. In claude.ai, **Settings › Connectors › Add custom connector** with the connector URL (no client ID or secret).
+   **Connect** opens the sign-in page:
+
+<p align="center">
+  <picture><source media="(prefers-color-scheme: light)" srcset="docs/images/signin-light.png"><img src="docs/images/signin.png" width="360" alt="The sign-in page: Connect Claude to Apple Calendar, a read-only option, the passcode field with Allow, Approve on my Mac, and Deny"></picture>
+  <picture><source media="(prefers-color-scheme: light)" srcset="docs/images/approval-connect-light.png"><img src="docs/images/approval-connect.png" width="400" alt="The menu bar app asks: Claude wants to connect to Apple Calendar, with Deny and Allow"></picture>
+</p>
+
+A connection may do what Claude on the Mac may do, or only read; deleting and changing shared events still wait for
+your OK in the menu bar app. **Connected apps** lists each one, and **Disconnect** ends it at its next request.
+Tokens last an hour and refresh for 90 days of use; the server keeps only their hashes. Details, the tunnel set-up
+and the security model: [docs/remote.md](docs/remote.md).
 
 ## What Claude can do
 
@@ -170,6 +199,7 @@ on), and two resources, `calendar://today` and `calendar://upcoming`, notify sub
 
 ```text
 apple-calendar-mcp [--read-only]                                        serve MCP over stdio
+apple-calendar-mcp remote [--port N] [--listen ADDR] [--address URL]    serve MCP over HTTP with OAuth (claude.ai)
 apple-calendar-mcp doctor                                               check the app, the permission and the bridge
 apple-calendar-mcp install | uninstall [claude-code | claude-desktop]   register with Claude
 apple-calendar-mcp skills [list | install | uninstall | export DIR]     manage the Claude skills
@@ -179,6 +209,7 @@ apple-calendar-mcp call <tool> '{"json": "arguments"}'                  run one 
 ## How it works
 
 ```text
+claude.ai ──HTTPS──▶ tunnel ──HTTP──▶ apple-calendar-mcp remote (OAuth, run by the app) ──▶ EventKit; approvals over the socket
 Claude ──MCP (stdio)──▶ apple-calendar-mcp ──socket (signatures checked)──▶ Apple Calendar MCP.app ──▶ EventKit ──▶ your accounts
                                                                             menu bar: approvals · activity · settings · Claude setup · updates
 ```

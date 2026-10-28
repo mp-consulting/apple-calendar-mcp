@@ -1,4 +1,5 @@
 import AppKit
+import CalendarStore
 import SwiftUI
 
 /// Menu bar agent: holds the Calendars permission for the MCP servers, asks before deletions and changes that other
@@ -135,6 +136,14 @@ enum Snapshots {
             save(MenuContent(model: model, fixedTab: .claude), "tab-claude")
             save(MenuContent(model: model, fixedTab: .settings), "tab-settings")
             save(ApprovalWindow(model: model), "approval")
+            if model.settings.remoteAccess {
+                save(Form { RemoteSection(model: model) }.formStyle(.grouped).frame(width: 520), "settings-remote")
+                let connect = ApprovalRequest(
+                    tool: "connect", client: "Claude", kind: .connect, title: "Claude wants to connect to Apple Calendar",
+                    items: ["Read and change your calendars and reminders", "Deletions and shared-event changes still ask here"],
+                    detail: "Approving sends the browser back to claude.ai.")
+                save(ApprovalBlock(request: connect) { _ in }.padding(16).frame(width: 460), "approval-connect")
+            }
         }
     }
 }
