@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import CalendarStore
 import Foundation
@@ -47,3 +48,4 @@ public enum LaunchContext {
         NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, _ in }
     }
 }
+#endif

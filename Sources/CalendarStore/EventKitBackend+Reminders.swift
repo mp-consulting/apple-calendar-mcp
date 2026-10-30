@@ -1,3 +1,4 @@
+#if os(macOS)
 import EventKit
 import Foundation
 
@@ -156,3 +157,4 @@ extension EventKitBackend {
             recurrence: reminder.recurrenceRules?.first.map(rule), created: reminder.creationDate, modified: reminder.lastModifiedDate)
     }
 }
+#endif

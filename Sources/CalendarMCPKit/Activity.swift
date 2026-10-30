@@ -116,7 +116,7 @@ public final class ActivityLog: @unchecked Sendable {
         return Stamp(parts: [url, url.appendingPathExtension("1")].map { file in
             var info = stat()
             guard stat(file.path, &info) == 0 else { return [] }
-            return [Int64(info.st_size), Int64(info.st_mtimespec.tv_sec), Int64(info.st_mtimespec.tv_nsec), Int64(info.st_ino)]
+            return [Int64(info.st_size), Int64(info.modification.tv_sec), Int64(info.modification.tv_nsec), Int64(info.st_ino)]
         })
     }
 
@@ -155,5 +155,16 @@ extension ActivityEntry {
         serverVersions(in: entries.filter { now.timeIntervalSince($0.date) < window })
             .filter { CalendarMCPVersion.isOlder($0.version, than: current) }
             .map { ($0.client, $0.version) }
+    }
+}
+
+extension stat {
+    /// When the file last changed (`st_mtimespec` on Apple platforms, `st_mtim` on Linux).
+    var modification: timespec {
+        #if os(Linux)
+        st_mtim
+        #else
+        st_mtimespec
+        #endif
     }
 }

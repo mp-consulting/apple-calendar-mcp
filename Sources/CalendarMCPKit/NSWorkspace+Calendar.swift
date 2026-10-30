@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 
 extension NSWorkspace {
@@ -17,3 +18,4 @@ extension NSWorkspace {
         return true
     }
 }
+#endif

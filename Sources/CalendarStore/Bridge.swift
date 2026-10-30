@@ -1,3 +1,4 @@
+#if os(macOS)
 import CryptoKit
 import Foundation
 import Security
@@ -553,3 +554,4 @@ public final class BridgeBackend: CalendarBackend, @unchecked Sendable {
 
     public func deleteReminder(_ id: String) throws { _ = try client.send(.deleteReminder(id)) }
 }
+#endif

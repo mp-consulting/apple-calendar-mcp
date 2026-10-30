@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import EventKit
 import Foundation
@@ -403,3 +404,4 @@ extension EKEvent {
 extension Comparable {
     func clamped(_ low: Self, _ high: Self) -> Self { min(max(self, low), high) }
 }
+#endif
