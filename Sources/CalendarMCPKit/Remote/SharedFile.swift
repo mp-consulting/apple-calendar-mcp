@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 
 /// A JSON file shared by every server process and the menu bar app: owner-only, read-modify-write under a
@@ -55,3 +56,4 @@ final class SharedJSONFile<Value: Codable & Sendable>: @unchecked Sendable {
         return result
     }
 }
+#endif

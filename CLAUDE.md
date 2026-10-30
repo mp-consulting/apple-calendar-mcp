@@ -57,6 +57,9 @@ APPLE_CALENDAR_MCP_SUPPORT_DIR=/tmp/acm-demo "…/Apple Calendar MCP.app/Content
 - Skills may only mention tools and parameters that exist (`SkillTests.skillsOnlyReferenceRealToolsAndParameters`).
 - **No Claude attribution in git.** Commit messages and pull request descriptions carry no `Co-Authored-By: Claude`
   trailer and no "Generated with Claude Code" line.
+- The server also builds on Linux, demo week only: the `Dockerfile` is what Glama runs to read the tools (its
+  quality grade). Fence Apple-only code (EventKit, AppKit, Security, CryptoKit, CoreFoundation, Darwin) with
+  `#if os(macOS)` / `canImport`; CI's `linux` job builds the image and lists the tools.
 - CI's compiler (Swift 6.2) is slower than local: build big `JSON.obj` literals in typed steps
   (`-Xfrontend -warn-long-expression-type-checking=60` finds them).
 - **The panel looks like Apple Mail MCP's** (same `Views.swift` building blocks, segmented tab bar, orange-bordered

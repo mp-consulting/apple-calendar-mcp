@@ -1,4 +1,6 @@
+#if os(macOS)
 import AppKit
+#endif
 import CalendarFixtures
 import CalendarMCPKit
 import CalendarStore
@@ -79,14 +81,23 @@ let settings = SettingsProvider { settings in
 
 func makeToolbox(demo isDemo: Bool, readOnly: Bool, settings: SettingsProvider) -> CalendarToolbox {
     let approveAll: Approver = { @Sendable _, _ in .approved }
+    #if os(macOS)
     let approver: Approver = isDemo ? approveAll : LaunchContext.approver()
+    let real: @Sendable () throws -> any CalendarBackend = { try LaunchContext.backend() }
+    #else
+    // Linux (Glama's inspection container, for one): no EventKit, so only the demo week.
+    let approver = approveAll
+    let real: @Sendable () throws -> any CalendarBackend = { throw ToolError("Apple Calendar needs macOS: run with --demo here") }
+    #endif
     let toolbox = CalendarToolbox(
-        backend: { isDemo ? StandardFixture.backend() : try LaunchContext.backend() }, settings: settings,
+        backend: { isDemo ? StandardFixture.backend() : try real() }, settings: settings,
         // Benchmarks, demos and scripted runs set this so they don't show up in the menu bar's Activity.
         activity: ProcessInfo.processInfo.environment["APPLE_CALENDAR_MCP_NO_ACTIVITY"] == nil && !isDemo ? ActivityLog() : nil,
         journal: isDemo ? nil : ChangeJournal(),
         approver: approver, readOnly: readOnly)
+    #if os(macOS)
     toolbox.open = { links in await NSWorkspace.shared.showInCalendar(links) }
+    #endif
     return toolbox
 }
 
@@ -95,6 +106,7 @@ case nil, "serve":
     watchParent()
     try await CalendarMCPServer.runStdio(toolbox: makeToolbox(demo: demo, readOnly: readOnly, settings: settings))
 
+#if os(macOS)
 case "remote":
     // Started by the menu bar app: ends with it.
     if ProcessInfo.processInfo.environment["APPLE_CALENDAR_MCP_REMOTE_CHILD"] != nil { watchParent() }
@@ -138,6 +150,7 @@ case "remote":
     }
     termination.resume()
     while true { try await Task.sleep(nanoseconds: 3_600_000_000_000) }
+#endif
 
 case "doctor":
     print(await Doctor.report(settings: settings.current))

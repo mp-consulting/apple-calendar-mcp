@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import CalendarStore
 import MCP
@@ -493,3 +494,4 @@ public final class RemoteServer: @unchecked Sendable {
         return Self.json(["status": ticket.status == nil && Date().timeIntervalSince(ticket.created) < settings.current.approvalTimeout + 20 ? "pending" : "expired"])
     }
 }
+#endif

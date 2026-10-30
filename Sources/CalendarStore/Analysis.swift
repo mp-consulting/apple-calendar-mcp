@@ -128,7 +128,9 @@ public enum VideoLink {
         "gotomeeting.com", "meet.jit.si", "chime.aws", "bluejeans.com", "around.co", "discord.gg",
     ]
 
+    #if os(macOS)
     static let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+    #endif
 
     public static func find(in event: Event) -> String? {
         for text in [event.url, event.location, event.notes].compactMap({ $0 }) {
@@ -138,13 +140,25 @@ public enum VideoLink {
     }
 
     public static func find(in text: String) -> String? {
-        guard let detector else { return nil }
-        let range = NSRange(text.startIndex..., in: text)
-        for match in detector.matches(in: text, range: range) {
-            guard let url = match.url, let host = url.host()?.lowercased() else { continue }
+        for url in links(in: text) {
+            guard let host = url.host()?.lowercased() else { continue }
             if hosts.contains(where: { host == $0 || host.hasSuffix("." + $0) }) { return url.absoluteString }
         }
         return nil
+    }
+
+    static func links(in text: String) -> [URL] {
+        #if os(macOS)
+        guard let detector else { return [] }
+        return detector.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap(\.url)
+        #else
+        // No NSDataDetector outside Apple platforms: whole http(s) words, without the punctuation around them.
+        let delimiters = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "<>\"'()[]"))
+        return text.components(separatedBy: delimiters)
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?")) }
+            .filter { $0.lowercased().hasPrefix("http://") || $0.lowercased().hasPrefix("https://") }
+            .compactMap(URL.init(string:))
+        #endif
     }
 }
 

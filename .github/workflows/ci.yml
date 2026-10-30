@@ -19,7 +19,7 @@ jobs:
     # macOS 26 and its Xcode: the menu bar app uses the Liquid Glass APIs and Swift 6.2.
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Use the newest Xcode on the runner
         # The image's default can lag behind; local builds use the current Xcode, so CI should too.
@@ -40,3 +40,20 @@ jobs:
 
       - name: Build
         run: swift build -c release --arch arm64
+
+  linux:
+    # The Dockerfile Glama builds to read the tools: the server must keep compiling on Linux (demo week only).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the image
+        run: docker build -t apple-calendar-mcp .
+
+      - name: The server lists its tools
+        run: |
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            | { cat; sleep 2; } | docker run --rm -i apple-calendar-mcp | grep -q '"name":"agenda"'

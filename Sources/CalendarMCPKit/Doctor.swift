@@ -19,6 +19,7 @@ public enum Doctor {
     #endif
     public static func checks(settings: Settings, socket: URL = SharedPaths.bridgeSocket) async -> [Check] {
         var checks: [Check] = []
+        #if os(macOS)
         let here = EventKitBackend.authorization()
         checks.append(Check(
             name: "This process", state: .ok,
@@ -54,6 +55,9 @@ public enum Doctor {
                         ?? "not installed: it holds the Calendars permission (see the README)"))
             }
         }
+        #else
+        checks.append(Check(name: "Calendar", state: .failed, detail: "EventKit is macOS only: here the server runs with --demo"))
+        #endif
 
         // The last day only: a server that died long ago is history, not a problem to fix.
         let stuck = ActivityLog().stuck().filter { Date().timeIntervalSince($0.date) < 86_400 }
