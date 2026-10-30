@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-30
+
+### Added
+
+- The server builds and runs on Linux with the made-up demo week (`--demo`), and the repository has a `Dockerfile`
+  for directories that start a server to read its tools, such as Glama. Real calendars still need the Mac app.
+- `glama.json`, and a CI job that builds the image and lists the tools.
+
 ## [0.4.0] - 2026-10-28
 
 ### Added
@@ -142,7 +150,10 @@ The first release.
 - CI on every push and pull request; the release workflow (signed, notarized DMG and Claude extension, MCP
   registry).
 
-[Unreleased]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/mp-consulting/apple-calendar-mcp/compare/v0.1.2...v0.1.3
